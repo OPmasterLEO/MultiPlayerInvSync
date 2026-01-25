@@ -1,0 +1,49 @@
+name: Build and Package
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        run: ./gradlew clean build --no-daemon
+
+      - name: Capture project version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(./gradlew properties -q | grep "^version:" | awk '{print $2}')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plugin JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: MultiPlayerInvSync-${{ steps.version.outputs.version }}
+          path: build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Build summary
+        run: |
+          echo "### Build Output" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Version: ${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Java: 21 (Temurin)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- OS: Ubuntu-latest" >> "$GITHUB_STEP_SUMMARY"
