@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
@@ -84,6 +86,46 @@ jobs:
           name: ${{ steps.meta.outputs.artifact }}
           path: build/out/${{ steps.meta.outputs.artifact }}
           if-no-files-found: error
+
+      - name: Generate release notes
+        if: github.event_name == 'push'
+        id: notes
+        shell: bash
+        run: |
+          git fetch --tags --quiet
+          LAST_TAG=$(git describe --tags --abbrev=0 --match "v*" 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="$LAST_TAG..HEAD"
+          fi
+          COMMITS=$(git log --no-merges --pretty=format:"- %s (%h)" $RANGE || true)
+          if [ -z "$COMMITS" ]; then
+            COMMITS="- Maintenance build"
+          fi
+          echo -e "## Changes\n$COMMITS\n\n" > release_notes.md
+          echo "last_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create Git tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          TAG="v${{ steps.meta.outputs.version }}-b${BUILD_NUMBER}"
+          git tag "$TAG" "$GITHUB_SHA" || true
+          git push origin "$TAG" || true
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        id: tagstep
+
+      - name: Publish release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tagstep.outputs.tag }}
+          name: "MultiPlayerInvSync v${{ steps.meta.outputs.version }} (build ${{ env.BUILD_NUMBER }})"
+          body_path: release_notes.md
+          files: build/out/${{ steps.meta.outputs.artifact }}
+          draft: false
+          prerelease: false
 
       - name: Build summary
         run: |
