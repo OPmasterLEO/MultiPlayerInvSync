@@ -1,0 +1,89 @@
+package net.opmasterleo.multiinvsync.config;
+
+import org.bukkit.configuration.file.FileConfiguration;
+
+import net.opmasterleo.multiinvsync.MultiInvSyncPlugin;
+
+public class ConfigManager {
+    
+    private final MultiInvSyncPlugin plugin;
+    private FileConfiguration config;
+    
+    public ConfigManager(MultiInvSyncPlugin plugin) {
+        this.plugin = plugin;
+    }
+    
+    public void load() {
+        plugin.saveDefaultConfig();
+        plugin.reloadConfig();
+        config = plugin.getConfig();
+    }
+    
+    public boolean isEnabled() {
+        return config.getBoolean("enabled", true);
+    }
+    
+    public boolean isSyncMainInventory() {
+        return config.getBoolean("sync.main-inventory", true);
+    }
+    
+    public boolean isSyncArmor() {
+        return config.getBoolean("sync.armor", true);
+    }
+    
+    public boolean isSyncOffhand() {
+        return config.getBoolean("sync.offhand", true);
+    }
+    
+    public boolean isSyncEnderChest() {
+        return config.getBoolean("sync.ender-chest", true);
+    }
+
+    public boolean isSyncExperience() {
+        return config.getBoolean("sync.experience", false);
+    }
+
+    public boolean isSyncMoney() {
+        return config.getBoolean("economy.sync-money", false);
+    }
+
+    public String getEconomyProvider() {
+        return config.getString("economy.provider", "essentials");
+    }
+    
+    public int getSyncDelayTicks() {
+        return config.getInt("sync.delay-ticks", 1);
+    }
+    
+    public boolean isSharedDeath() {
+        return config.getBoolean("death.shared-death", true);
+    }
+    
+    public boolean isBroadcastSharedDeath() {
+        return config.getBoolean("death.broadcast-shared-death", true);
+    }
+    
+    public String getDeathMessage() {
+        return config.getString("death.death-message", "&c{player} died! All synchronized inventories have been cleared.");
+    }
+    
+    public boolean isTeamsEnabled() {
+        return config.getBoolean("teams.enabled", false);
+    }
+    
+    public String getTeamPlugin() {
+        return config.getString("teams.plugin", "auto");
+    }
+    
+    public boolean isFallbackToGlobal() {
+        return config.getBoolean("teams.fallback-to-global", true);
+    }
+    
+    public boolean isDebugEnabled() {
+        return config.getBoolean("debug.enabled", false);
+    }
+    
+    public boolean isLogSyncEvents() {
+        return config.getBoolean("debug.log-sync-events", false);
+    }
+}

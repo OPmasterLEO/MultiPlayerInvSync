@@ -1,0 +1,27 @@
+name: ${name}
+version: '${version}'
+main: net.opmasterleo.multiinvsync.MultiInvSyncPlugin
+description: ${description}
+api-version: '${apiVersion}'
+load: POSTWORLD
+author: OPMasterLEO
+website: https://github.com/opmasterleo
+folia-supported: true
+
+softdepend:
+  - BetterTeams
+
+commands:
+  multiinvsync:
+    description: Main plugin command
+    aliases: [mis, invsync]
+    permission: multiinvsync.admin
+    usage: /<command> [reload|info]
+
+permissions:
+  multiinvsync.admin:
+    description: Access to all plugin commands
+    default: op
+  multiinvsync.bypass:
+    description: Bypass inventory synchronization
+    default: false

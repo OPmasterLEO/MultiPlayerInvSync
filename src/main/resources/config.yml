@@ -1,0 +1,50 @@
+# MultiPlayerInvSync Configuration
+# Global inventory synchronization with team support
+
+# Enable or disable the plugin
+enabled: true
+
+# Synchronization settings
+sync:
+  # Sync main inventory (slots 0-35)
+  main-inventory: true
+  # Sync armor slots (helmet, chestplate, leggings, boots)
+  armor: true
+  # Sync offhand slot
+  offhand: true
+  # Sync ender chest
+  ender-chest: true
+  # Sync delay in ticks (1 = instant)
+  delay-ticks: 1
+  # Sync player experience (level + progress)
+  experience: false
+
+# Economy synchronization
+economy:
+  # Sync balances across the same targets as inventories (global or team)
+  sync-money: false
+  # Economy provider (essentials | auto). Auto currently tries EssentialsX.
+  provider: "auto"
+
+# Death behavior
+death:
+  # When one player dies, clear all synchronized inventories
+  shared-death: true
+  # Death message broadcast
+  broadcast-shared-death: true
+  death-message: "&c{player} died! All synchronized inventories have been cleared."
+
+# Team integration
+teams:
+  # Enable team-based inventory synchronization
+  enabled: false
+  # Team plugin to use (betterteams, simpleteams, auto)
+  # 'auto' will automatically detect available team plugins
+  plugin: "auto"
+  # If no team plugin found, sync globally
+  fallback-to-global: true
+
+# Debug settings
+debug:
+  enabled: false
+  log-sync-events: false
