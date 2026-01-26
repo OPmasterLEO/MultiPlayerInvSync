@@ -1,16 +1,17 @@
 package net.opmasterleo.multiinvsync.economy;
 
-import net.opmasterleo.multiinvsync.MultiInvSyncPlugin;
+import java.util.Collection;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.plugin.EventExecutor;
 
-import java.util.Collection;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import net.opmasterleo.multiinvsync.MultiInvSyncPlugin;
 
 public class EconomySyncManager {
     private final MultiInvSyncPlugin plugin;

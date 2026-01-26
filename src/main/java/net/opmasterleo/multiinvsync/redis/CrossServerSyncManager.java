@@ -1,7 +1,5 @@
 package net.opmasterleo.multiinvsync.redis;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -15,7 +13,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.PlayerInventory;
 
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.item.ItemStack;
 import net.opmasterleo.multiinvsync.MultiInvSyncPlugin;
 import net.opmasterleo.multiinvsync.config.ConfigManager;
 import net.opmasterleo.multiinvsync.redis.RedisInventoryStorage.InventoryData;
