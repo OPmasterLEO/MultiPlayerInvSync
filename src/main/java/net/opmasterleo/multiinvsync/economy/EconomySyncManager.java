@@ -149,4 +149,30 @@ public class EconomySyncManager {
             plugin.getLogger().warning("Failed to handle EssentialsX balance event: " + e.getMessage());
         }
     }
+    
+    /**
+     * Get player's balance (for Redis integration).
+     */
+    public double getBalance(Player player) {
+        if (!enabled || provider == null || !provider.isAvailable()) {
+            return 0.0;
+        }
+        return provider.getBalance(player);
+    }
+    
+    /**
+     * Apply balance to player (for Redis integration).
+     */
+    public void applyBalance(Player player, double balance) {
+        if (!enabled || provider == null || !provider.isAvailable()) {
+            return;
+        }
+        UUID playerId = player.getUniqueId();
+        syncingMoney.add(playerId);
+        try {
+            provider.setBalance(player, balance);
+        } finally {
+            syncingMoney.remove(playerId);
+        }
+    }
 }

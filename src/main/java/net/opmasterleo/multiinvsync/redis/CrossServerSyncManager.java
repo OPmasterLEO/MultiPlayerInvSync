@@ -85,7 +85,7 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
         velocityIntegration.initialize();
         
         // Wait a moment for Velocity detection
-        plugin.getScheduler().runLater(() -> {
+        plugin.getScheduler().runMainLater(() -> {
             serverId = velocityIntegration.getCurrentServerId();
             
             if (!velocityIntegration.isVelocityDetected()) {
