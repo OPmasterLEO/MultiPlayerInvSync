@@ -27,22 +27,12 @@ public class InventoryListener implements Listener {
     }
 
     private void triggerSync(Player player) {
-        plugin.getScheduler().runMainLater(() -> plugin.getSyncManager().syncInventory(player), 1L);
+        // Immediate main-thread sync for Bukkit event sources (inventory clicks, item pickup, etc.)
+        plugin.getScheduler().runMain(() -> plugin.getSyncManager().syncInventory(player));
     }
     
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onInventoryClick(InventoryClickEvent event) {
-        if (event.getWhoClicked() instanceof Player player) {
-            triggerSync(player);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onInventoryDrag(InventoryDragEvent event) {
-        if (event.getWhoClicked() instanceof Player player) {
-            triggerSync(player);
-        }
-    }
+    // Removed onInventoryClick, onInventoryDrag, onPlayerDropItem, onPlayerSwapHandItems 
+    // as they are now handled by NMS Packet Listeners for optimization.
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onInventoryMoveItem(InventoryMoveItemEvent event) {
@@ -58,10 +48,7 @@ public class InventoryListener implements Listener {
         }
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onPlayerDropItem(PlayerDropItemEvent event) {
-        triggerSync(event.getPlayer());
-    }
+    // Removed onPlayerDropItem - handled by NMS
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onEntityPickupItem(EntityPickupItemEvent event) {
@@ -83,10 +70,7 @@ public class InventoryListener implements Listener {
         triggerSync(event.getPlayer());
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onPlayerSwapHandItems(PlayerSwapHandItemsEvent event) {
-        triggerSync(event.getPlayer());
-    }
+    // Removed onPlayerSwapHandItems - handled by NMS
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerItemConsume(PlayerItemConsumeEvent event) {

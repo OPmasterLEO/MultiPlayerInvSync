@@ -38,6 +38,10 @@ public class ConfigManager {
     public boolean isSyncEnderChest() {
         return config.getBoolean("sync.ender-chest", true);
     }
+    
+    public boolean isSyncCursor() {
+        return config.getBoolean("sync.cursor", false);
+    }
 
     public boolean isSyncExperience() {
         return config.getBoolean("sync.experience", false);

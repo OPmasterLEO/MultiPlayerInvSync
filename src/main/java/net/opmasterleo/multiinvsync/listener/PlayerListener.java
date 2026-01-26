@@ -70,7 +70,8 @@ public class PlayerListener implements Listener {
         if (msg.startsWith("/give") || msg.startsWith("/i ") || msg.startsWith("/item ") ||
             msg.startsWith("/loot") || msg.startsWith("/clear") || msg.startsWith("/kit") ||
             msg.startsWith("/replaceitem") || msg.startsWith("/mi ") || msg.startsWith("/essentials:give")) {
-            plugin.getScheduler().runMainLater(() -> plugin.getSyncManager().syncInventory(event.getPlayer()), 2L);
+            // Sync 1 tick after command execution to ensure item is in inventory
+            plugin.getScheduler().runMainLater(() -> plugin.getSyncManager().syncInventory(event.getPlayer()), 1L);
         }
     }
 

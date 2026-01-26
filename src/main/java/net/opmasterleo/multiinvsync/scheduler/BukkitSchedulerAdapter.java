@@ -8,6 +8,8 @@ import org.bukkit.scheduler.BukkitTask;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.bukkit.entity.Entity;
+
 public class BukkitSchedulerAdapter implements SchedulerAdapter {
     private final MultiInvSyncPlugin plugin;
     private final BukkitScheduler scheduler;
@@ -31,6 +33,16 @@ public class BukkitSchedulerAdapter implements SchedulerAdapter {
     @Override
     public void runAsync(Runnable task) {
         asyncTasks.add(scheduler.runTaskAsynchronously(plugin, task));
+    }
+    
+    @Override
+    public void runAtEntity(Entity entity, Runnable task) {
+        scheduler.runTask(plugin, task);
+    }
+
+    @Override
+    public void runAtEntityLater(Entity entity, Runnable task, long delayTicks) {
+        scheduler.runTaskLater(plugin, task, delayTicks);
     }
 
     @Override

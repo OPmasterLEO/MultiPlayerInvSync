@@ -30,6 +30,7 @@ public class InventorySyncManager {
     private final Set<UUID> bypassPlayers = ConcurrentHashMap.newKeySet();
     private final List<SyncBatch> pendingBatches = new CopyOnWriteArrayList<>();
     private final Set<UUID> syncingNow = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> processingSync = ConcurrentHashMap.newKeySet();
     
     public InventorySyncManager(MultiInvSyncPlugin plugin) {
         this.plugin = plugin;
@@ -54,51 +55,57 @@ public class InventorySyncManager {
         if (bypassPlayers.contains(sourceId)) {
             return;
         }
-        if (!syncingNow.add(sourceId)) {
-            return; // already syncing this player; avoid re-entrancy
-        }
         
         long currentTime = System.currentTimeMillis();
         Long lastSync = lastSyncTime.get(sourceId);
         
         int delayTicks = plugin.getConfigManager().getSyncDelayTicks();
         if (lastSync != null && currentTime - lastSync < (delayTicks * 50L)) {
-            syncingNow.remove(sourceId);
             return;
         }
         
+        if (!syncingNow.add(sourceId)) {
+            return; // already syncing this player; avoid re-entrancy
+        }
         lastSyncTime.put(sourceId, currentTime);
         
-        Collection<Player> targets = getTargetPlayers(source);
-        if (targets.isEmpty()) {
-            syncingNow.remove(sourceId);
-            return;
-        }
-        
-        // Run on main thread to safely access Bukkit/CraftBukkit objects
-        plugin.getScheduler().runMain(() -> {
+        // Schedule on Source Region/Thread to capture state
+        plugin.getScheduler().runAtEntity(source, () -> {
             try {
-                syncWithNMS(source, targets);
+                if (!source.isOnline()) return;
+                
+                InventorySnapshot snapshot = captureSnapshot(source);
+                Collection<Player> targets = getTargetPlayers(source);
+                
+                if (targets.isEmpty() || (targets.size() == 1 && targets.contains(source))) return;
+                
+                // Distribute to targets
+                for (Player target : targets) {
+                    if (target.getUniqueId().equals(sourceId)) continue;
+                    
+                    // Schedule apply on Target Region/Thread
+                    plugin.getScheduler().runAtEntity(target, () -> applySnapshot(target, snapshot));
+                }
+                
+                if (plugin.getConfigManager().isLogSyncEvents()) {
+                    plugin.getLogger().info("Synced inventory from " + source.getName() + 
+                        " to " + (targets.size() - 1) + " players");
+                }
+            } catch (Exception e) {
+                plugin.getLogger().warning("Sync error: " + e.getMessage());
             } finally {
                 syncingNow.remove(sourceId);
             }
         });
     }
-    
-    private void syncWithNMS(Player source, Collection<Player> targets) {
-        // Snapshot once per sync to minimize per-player overhead
+
+    private InventorySnapshot captureSnapshot(Player source) {
         List<ItemStack> items = new ArrayList<>(45);
         PlayerInventory inv = source.getInventory();
         int srcLevel = 0;
         int srcTotalXp = 0;
         float srcExp = 0.0F;
-        boolean syncXp = plugin.getConfigManager().isSyncExperience();
-        if (syncXp) {
-            srcLevel = source.getLevel();
-            srcTotalXp = source.getTotalExperience();
-            srcExp = source.getExp();
-        }
-        
+
         if (plugin.getConfigManager().isSyncMainInventory()) {
             for (int i = 0; i < 36; i++) {
                 items.add(CraftItemStack.asNMSCopy(inv.getItem(i)));
@@ -115,7 +122,12 @@ public class InventorySyncManager {
         if (plugin.getConfigManager().isSyncOffhand()) {
             items.add(CraftItemStack.asNMSCopy(inv.getItemInOffHand()));
         }
-        
+
+        ItemStack cursorItem = null;
+        if (plugin.getConfigManager().isSyncCursor()) {
+            cursorItem = CraftItemStack.asNMSCopy(source.getItemOnCursor());
+        }
+
         List<ItemStack> enderItems = new ArrayList<>(27);
         if (plugin.getConfigManager().isSyncEnderChest()) {
             for (int i = 0; i < 27; i++) {
@@ -123,53 +135,97 @@ public class InventorySyncManager {
             }
         }
         
-        for (Player target : targets) {
-            if (target.getUniqueId().equals(source.getUniqueId())) {
-                continue;
-            }
-            
+        if (plugin.getConfigManager().isSyncExperience()) {
+            srcLevel = source.getLevel();
+            srcTotalXp = source.getTotalExperience();
+            srcExp = source.getExp();
+        }
+        
+        return new InventorySnapshot(items, enderItems, cursorItem, srcLevel, srcTotalXp, srcExp);
+    }
+    
+    private void applySnapshot(Player target, InventorySnapshot snapshot) {
+        if (!target.isOnline()) return;
+
+        processingSync.add(target.getUniqueId());
+        try {
             ServerPlayer nmsTarget = ((CraftPlayer) target).getHandle();
-            
-            int slot = 0;
             PlayerInventory targetInv = target.getInventory();
+            List<ItemStack> items = snapshot.items;
+            int slot = 0;
 
             if (plugin.getConfigManager().isSyncMainInventory()) {
                 for (int i = 0; i < 36 && slot < items.size(); i++) {
-                    targetInv.setItem(i, CraftItemStack.asBukkitCopy(items.get(slot++)));
+                    setItemIfChanged(targetInv, i, items.get(slot++));
                 }
             }
 
             if (plugin.getConfigManager().isSyncArmor() && slot + 3 < items.size()) {
-                targetInv.setHelmet(CraftItemStack.asBukkitCopy(items.get(slot++)));
-                targetInv.setChestplate(CraftItemStack.asBukkitCopy(items.get(slot++)));
-                targetInv.setLeggings(CraftItemStack.asBukkitCopy(items.get(slot++)));
-                targetInv.setBoots(CraftItemStack.asBukkitCopy(items.get(slot++)));
+                setItemIfChanged(targetInv, 39, items.get(slot++)); // Helmet
+                setItemIfChanged(targetInv, 38, items.get(slot++)); // Chest
+                setItemIfChanged(targetInv, 37, items.get(slot++)); // Legs
+                setItemIfChanged(targetInv, 36, items.get(slot++)); // Boots
             }
 
             if (plugin.getConfigManager().isSyncOffhand() && slot < items.size()) {
-                targetInv.setItemInOffHand(CraftItemStack.asBukkitCopy(items.get(slot)));
+                setItemIfChanged(targetInv, 40, items.get(slot));
+            }
+            
+            if (plugin.getConfigManager().isSyncCursor() && snapshot.cursorItem != null) {
+                target.setItemOnCursor(CraftItemStack.asBukkitCopy(snapshot.cursorItem));
             }
 
             if (plugin.getConfigManager().isSyncEnderChest()) {
+                List<ItemStack> enderItems = snapshot.enderItems;
                 for (int i = 0; i < 27 && i < enderItems.size(); i++) {
+                    // Ender chest doesn't use standard slot indices in same way for event triggers, but setItem is safe
                     target.getEnderChest().setItem(i, CraftItemStack.asBukkitCopy(enderItems.get(i)));
                 }
             }
 
-            if (syncXp) {
-                target.setTotalExperience(srcTotalXp);
-                target.setLevel(srcLevel);
-                target.setExp(srcExp);
+            if (plugin.getConfigManager().isSyncExperience()) {
+                if (target.getTotalExperience() != snapshot.xpTotal) {
+                    target.setTotalExperience(snapshot.xpTotal);
+                    target.setLevel(snapshot.xpLevel);
+                    target.setExp(snapshot.xpExp);
+                }
             }
 
+            // Always refresh container to ensure client view is correct
             sendInventoryUpdate(nmsTarget);
-        }
-        
-        if (plugin.getConfigManager().isLogSyncEvents()) {
-            plugin.getLogger().info("Synced inventory from " + source.getName() + 
-                " to " + targets.size() + " players");
+        } finally {
+            processingSync.remove(target.getUniqueId());
         }
     }
+    
+    private void setItemIfChanged(PlayerInventory inv, int slot, ItemStack nmsItem) {
+        org.bukkit.inventory.ItemStack bukkitItem = CraftItemStack.asBukkitCopy(nmsItem);
+        org.bukkit.inventory.ItemStack current = inv.getItem(slot);
+        
+        if (current == null && bukkitItem.getType().isAir()) return;
+        if (current != null && current.equals(bukkitItem)) return;
+        
+        inv.setItem(slot, bukkitItem);
+    }
+    
+    private static class InventorySnapshot {
+        final List<ItemStack> items;
+        final List<ItemStack> enderItems;
+        final ItemStack cursorItem;
+        final int xpLevel;
+        final int xpTotal;
+        final float xpExp;
+        
+        InventorySnapshot(List<ItemStack> items, List<ItemStack> enderItems, ItemStack cursorItem, int xpLevel, int xpTotal, float xpExp) {
+            this.items = items;
+            this.enderItems = enderItems;
+            this.cursorItem = cursorItem;
+            this.xpLevel = xpLevel;
+            this.xpTotal = xpTotal;
+            this.xpExp = xpExp;
+        }
+    }
+    
     
     private void sendInventoryUpdate(ServerPlayer player) {
         player.containerMenu.sendAllDataToRemote();
@@ -245,6 +301,7 @@ public class InventorySyncManager {
     
     private class InventoryPacketHandler extends ChannelDuplexHandler {
         private final Player player;
+        private long lastPacketTime = 0;
         
         public InventoryPacketHandler(Player player) {
             this.player = player;
@@ -253,19 +310,26 @@ public class InventorySyncManager {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
             if (isCreativeSetSlot(msg)) {
-                // Creative slot changes finalize after server tick; sync slightly later
-                plugin.getScheduler().runMainLater(() -> syncInventory(player), 2L);
+                // Creative slot changes finalize after server tick
+                plugin.getScheduler().runAtEntityLater(player, () -> syncInventory(player), 2L);
             } else if (isInventoryMutationPacket(msg)) {
-                plugin.getScheduler().runMainLater(() -> syncInventory(player), 1L);
+                // Std Sync: Delay 1 tick to ensure server processes the mutation (click/drop/swap)
+                // This prevents syncing the "old" state (pre-transaction) which causes ghost items
+                long now = System.nanoTime();
+                if (now - lastPacketTime > 500_000) {
+                    lastPacketTime = now;
+                    plugin.getScheduler().runAtEntityLater(player, () -> syncInventory(player), 1L);
+                }
             }
             super.channelRead(ctx, msg);
         }
         
         @Override
         public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
-            if (isInventoryClientUpdate(msg)) {
-                plugin.getScheduler().runMainLater(() -> syncInventory(player), 1L);
-            }
+            // IGNORE Server to Client updates which may be caused by our own sync
+            // Rely only on Client to Server (Input) packets to trigger syncs
+            // or Bukkit Events for external plugins.
+            // This prevents the infinite feedback loop (dup-echo).
             super.write(ctx, msg, promise);
         }
     }
@@ -276,16 +340,20 @@ public class InventorySyncManager {
         }
         String name = msg.getClass().getSimpleName();
         // Cover modern and legacy names without hard-linking classes (avoids NoClassDefFoundError)
-        return name.contains("ContainerClick")
-            || name.contains("PickItem")
+        return name.contains("ContainerClick") // Std click
             || name.contains("WindowClick")
-            || name.contains("SetSlot");
+            || name.contains("PickItem") // Creative pick
+            || name.contains("SetSlot") // Sometimes client sends this?
+            || name.contains("PlayerAction") // Drop/Swap/Dig
+            || name.contains("BlockDig") // Drop item
+            || name.contains("SwapHand")
+            || name.contains("CreativeInventoryAction");
     }
 
     private boolean isCreativeSetSlot(Object msg) {
         if (msg == null) return false;
         String name = msg.getClass().getSimpleName();
-        return name.contains("SetCreativeModeSlot");
+        return name.contains("SetCreativeModeSlot") || name.contains("CreativeInventoryAction");
     }
 
     private boolean isInventoryClientUpdate(Object msg) {

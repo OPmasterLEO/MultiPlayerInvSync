@@ -15,6 +15,9 @@ public class FoliaSchedulerAdapter implements SchedulerAdapter {
     private final Method globalRun;
     private final Method globalRunDelayed;
     private final Method asyncRunNow;
+    private final Method entityGetScheduler;
+    private final Method entityRun;
+    private final Method entityRunDelayed;
     private final List<Object> tasks = new ArrayList<>();
 
     public FoliaSchedulerAdapter(MultiInvSyncPlugin plugin) {
@@ -29,10 +32,15 @@ public class FoliaSchedulerAdapter implements SchedulerAdapter {
 
             Class<?> globalSchedulerClass = Class.forName("io.papermc.paper.threadedregions.scheduler.GlobalRegionScheduler");
             Class<?> asyncSchedulerClass = Class.forName("io.papermc.paper.threadedregions.scheduler.AsyncScheduler");
+            Class<?> entitySchedulerClass = Class.forName("io.papermc.paper.threadedregions.scheduler.EntityScheduler");
 
             this.globalRun = globalSchedulerClass.getMethod("run", Plugin.class, Consumer.class);
             this.globalRunDelayed = globalSchedulerClass.getMethod("runDelayed", Plugin.class, Consumer.class, long.class);
             this.asyncRunNow = asyncSchedulerClass.getMethod("runNow", Plugin.class, Consumer.class);
+            
+            this.entityGetScheduler = org.bukkit.entity.Entity.class.getMethod("getScheduler");
+            this.entityRun = entitySchedulerClass.getMethod("run", Plugin.class, Consumer.class, Runnable.class);
+            this.entityRunDelayed = entitySchedulerClass.getMethod("runDelayed", Plugin.class, Consumer.class, Runnable.class, long.class);
         } catch (Exception e) {
             throw new IllegalStateException("Folia scheduler unavailable", e);
         }
@@ -60,6 +68,30 @@ public class FoliaSchedulerAdapter implements SchedulerAdapter {
     public void runAsync(Runnable task) {
         Consumer<Object> consumer = scheduledTask -> task.run();
         invoke(asyncRunNow, asyncScheduler, plugin, consumer);
+    }
+    
+    @Override
+    public void runAtEntity(org.bukkit.entity.Entity entity, Runnable task) {
+        try {
+            Object scheduler = entityGetScheduler.invoke(entity);
+            Consumer<Object> consumer = scheduledTask -> task.run();
+            // run(Plugin, Consumer, Runnable retired)
+            invoke(entityRun, scheduler, plugin, consumer, null);
+        } catch (Exception e) {
+            plugin.getLogger().warning("Failed to schedule task on entity " + entity.getName() + ": " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void runAtEntityLater(org.bukkit.entity.Entity entity, Runnable task, long delayTicks) {
+        try {
+            Object scheduler = entityGetScheduler.invoke(entity);
+            Consumer<Object> consumer = scheduledTask -> task.run();
+            // runDelayed(Plugin, Consumer, Runnable retired, long delay)
+            invoke(entityRunDelayed, scheduler, plugin, consumer, null, delayTicks);
+        } catch (Exception e) {
+            plugin.getLogger().warning("Failed to schedule delayed task on entity " + entity.getName() + ": " + e.getMessage());
+        }
     }
 
     @Override

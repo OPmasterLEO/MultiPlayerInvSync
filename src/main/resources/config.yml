@@ -14,6 +14,8 @@ sync:
   offhand: true
   # Sync ender chest
   ender-chest: true
+  # Sync cursor item (item held on mouse)
+  cursor: false
   # Sync delay in ticks (1 = instant)
   delay-ticks: 1
   # Sync player experience (level + progress)
