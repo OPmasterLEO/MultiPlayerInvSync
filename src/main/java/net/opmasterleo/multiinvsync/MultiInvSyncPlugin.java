@@ -12,6 +12,7 @@ import net.opmasterleo.multiinvsync.config.ConfigManager;
 import net.opmasterleo.multiinvsync.economy.EconomySyncManager;
 import net.opmasterleo.multiinvsync.listener.InventoryListener;
 import net.opmasterleo.multiinvsync.listener.PlayerListener;
+import net.opmasterleo.multiinvsync.redis.CrossServerSyncManager;
 import net.opmasterleo.multiinvsync.scheduler.BukkitSchedulerAdapter;
 import net.opmasterleo.multiinvsync.scheduler.FoliaSchedulerAdapter;
 import net.opmasterleo.multiinvsync.scheduler.SchedulerAdapter;
@@ -27,6 +28,7 @@ public class MultiInvSyncPlugin extends JavaPlugin {
     private MultiInvSyncAPI api;
     private SchedulerAdapter scheduler;
     private EconomySyncManager economySyncManager;
+    private CrossServerSyncManager crossServerSyncManager;
     
     @Override
     public void onEnable() {
@@ -57,6 +59,10 @@ public class MultiInvSyncPlugin extends JavaPlugin {
             syncManager = new InventorySyncManager(this);
             syncManager.initialize();
             
+            // Initialize Redis cross-server sync if enabled
+            crossServerSyncManager = new CrossServerSyncManager(this);
+            boolean redisEnabled = crossServerSyncManager.initialize();
+            
             api = new MultiInvSyncAPIImpl(this);
             
             int pluginId = 29073;
@@ -81,6 +87,9 @@ public class MultiInvSyncPlugin extends JavaPlugin {
             getLogger().info("✓ Offhand: " + (configManager.isSyncOffhand() ? "YES" : "NO"));
             getLogger().info("✓ Ender Chest: " + (configManager.isSyncEnderChest() ? "YES" : "NO"));
             getLogger().info("✓ Shared Death: " + (configManager.isSharedDeath() ? "YES" : "NO"));
+            if (redisEnabled && crossServerSyncManager.isEnabled()) {
+                getLogger().info("✓ Redis Cross-Server: ENABLED (Server: " + crossServerSyncManager.getServerId() + ")");
+            }
             getLogger().info("========================================");
             getLogger().info("Loaded in " + loadTime + "ms - Ready!");
             getLogger().info("========================================");
@@ -106,6 +115,9 @@ public class MultiInvSyncPlugin extends JavaPlugin {
     
     @Override
     public void onDisable() {
+        if (crossServerSyncManager != null) {
+            crossServerSyncManager.shutdown();
+        }
         if (syncManager != null) {
             syncManager.shutdown();
         }
@@ -171,6 +183,10 @@ public class MultiInvSyncPlugin extends JavaPlugin {
 
     public EconomySyncManager getEconomySyncManager() {
         return economySyncManager;
+    }
+    
+    public CrossServerSyncManager getCrossServerSyncManager() {
+        return crossServerSyncManager;
     }
 
     private SchedulerAdapter createScheduler() {

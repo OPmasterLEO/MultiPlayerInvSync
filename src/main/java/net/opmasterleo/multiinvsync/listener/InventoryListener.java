@@ -6,15 +6,11 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
-import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.inventory.InventoryPickupItemEvent;
 import org.bukkit.event.player.PlayerAttemptPickupItemEvent;
-import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerItemBreakEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
-import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 
 import net.opmasterleo.multiinvsync.MultiInvSyncPlugin;
 
@@ -28,7 +24,14 @@ public class InventoryListener implements Listener {
 
     private void triggerSync(Player player) {
         // Immediate main-thread sync for Bukkit event sources (inventory clicks, item pickup, etc.)
-        plugin.getScheduler().runMain(() -> plugin.getSyncManager().syncInventory(player));
+        plugin.getScheduler().runMain(() -> {
+            plugin.getSyncManager().syncInventory(player);
+            
+            // Also save to Redis if cross-server sync enabled
+            if (plugin.getCrossServerSyncManager() != null && plugin.getCrossServerSyncManager().isEnabled()) {
+                plugin.getCrossServerSyncManager().saveInventoryToRedis(player, true);
+            }
+        });
     }
     
     // Removed onInventoryClick, onInventoryDrag, onPlayerDropItem, onPlayerSwapHandItems 

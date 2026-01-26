@@ -29,15 +29,19 @@ public class PlayerListener implements Listener {
         
         plugin.getSyncManager().injectPlayer(player);
         
-        plugin.getScheduler().runMainLater(() -> {
-            Player source = findSourceFor(player);
-            if (source != null) {
-                plugin.getSyncManager().syncInventory(source);
-                if (plugin.getConfigManager().isSyncMoney() && plugin.getEconomySyncManager() != null) {
-                    plugin.getEconomySyncManager().syncBalanceFromSource(source);
+        if (plugin.getCrossServerSyncManager() != null && plugin.getCrossServerSyncManager().isEnabled()) {
+            plugin.getCrossServerSyncManager().handlePlayerJoin(player);
+        } else {
+            plugin.getScheduler().runMainLater(() -> {
+                Player source = findSourceFor(player);
+                if (source != null) {
+                    plugin.getSyncManager().syncInventory(source);
+                    if (plugin.getConfigManager().isSyncMoney() && plugin.getEconomySyncManager() != null) {
+                        plugin.getEconomySyncManager().syncBalanceFromSource(source);
+                    }
                 }
-            }
-        }, 20L);
+            }, 20L);
+        }
     }
 
     private Player findSourceFor(Player joined) {
@@ -60,6 +64,12 @@ public class PlayerListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
+        
+        // Handle cross-server sync if enabled
+        if (plugin.getCrossServerSyncManager() != null && plugin.getCrossServerSyncManager().isEnabled()) {
+            plugin.getCrossServerSyncManager().handlePlayerQuit(player);
+        }
+        
         plugin.getSyncManager().uninjectPlayer(player);
     }
 
@@ -106,6 +116,11 @@ public class PlayerListener implements Listener {
         plugin.getScheduler().runMainLater(() -> {
             // Clear everyone except the dead player (dead player's items drop naturally)
             plugin.getSyncManager().clearAllInventories(player, false);
+            
+            // Broadcast to Redis if cross-server sync enabled
+            if (plugin.getCrossServerSyncManager() != null && plugin.getCrossServerSyncManager().isEnabled()) {
+                plugin.getCrossServerSyncManager().broadcastPlayerDeath(player);
+            }
             
             if (plugin.getConfigManager().isBroadcastSharedDeath()) {
                 String message = plugin.getConfigManager().getDeathMessage()

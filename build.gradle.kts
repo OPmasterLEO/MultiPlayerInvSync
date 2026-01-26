@@ -19,6 +19,8 @@ dependencies {
     paperweight.paperDevBundle("1.21.1-R0.1-SNAPSHOT")
     compileOnly("com.github.booksaw:BetterTeams:4.15.2")
     implementation("org.bstats:bstats-bukkit:3.1.0")
+    implementation("redis.clients:jedis:7.2.1")
+    implementation("com.google.code.gson:gson:2.13.2")
 }
 
 java {
@@ -33,9 +35,11 @@ tasks {
     named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
         configurations = listOf(project.configurations.runtimeClasspath.get())
         dependencies {
-            exclude { it.moduleGroup != "org.bstats" }
+            exclude { it.moduleGroup != "org.bstats" && it.moduleGroup != "redis.clients" && it.moduleGroup != "com.google.code.gson" }
         }
         relocate("org.bstats", "${project.group}.bstats")
+        relocate("redis.clients.jedis", "${project.group}.jedis")
+        relocate("com.google.gson", "${project.group}.gson")
     }
 
     compileJava {

@@ -46,6 +46,24 @@ teams:
   # If no team plugin found, sync globally
   fallback-to-global: true
 
+# Redis cross-server synchronization
+# WARNING: Requires Velocity or BungeeCord proxy!
+# Running without a proxy WILL cause inventory duplication and data corruption!
+redis:
+  # Enable Redis-based cross-server inventory sync
+  enabled: false
+  # Redis server connection
+  host: "localhost"
+  port: 6379
+  # Password (leave empty if no auth)
+  password: ""
+  # Redis database number (0-15)
+  database: 0
+  # Connection timeout in milliseconds
+  timeout: 3000
+  # Allow Redis sync without proxy detection (DANGEROUS - may cause dupes!)
+  allow-without-proxy: false
+
 # Debug settings
 debug:
   enabled: false

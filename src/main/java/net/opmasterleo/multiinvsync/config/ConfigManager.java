@@ -90,4 +90,34 @@ public class ConfigManager {
     public boolean isLogSyncEvents() {
         return config.getBoolean("debug.log-sync-events", false);
     }
+    
+    // Redis configuration
+    public boolean isRedisEnabled() {
+        return config.getBoolean("redis.enabled", false);
+    }
+    
+    public String getRedisHost() {
+        return config.getString("redis.host", "localhost");
+    }
+    
+    public int getRedisPort() {
+        return config.getInt("redis.port", 6379);
+    }
+    
+    public String getRedisPassword() {
+        String password = config.getString("redis.password", "");
+        return password.isEmpty() ? null : password;
+    }
+    
+    public int getRedisDatabase() {
+        return config.getInt("redis.database", 0);
+    }
+    
+    public int getRedisTimeout() {
+        return config.getInt("redis.timeout", 3000);
+    }
+    
+    public boolean isRedisAllowWithoutProxy() {
+        return config.getBoolean("redis.allow-without-proxy", false);
+    }
 }
