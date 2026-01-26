@@ -1,5 +1,6 @@
 plugins {
     java
+    id("com.gradleup.shadow") version "9.3.1"
     id("io.papermc.paperweight.userdev") version "2.0.0-beta.19"
     id("xyz.jpenilla.run-paper") version "2.3.0"
 }
@@ -17,6 +18,7 @@ repositories {
 dependencies {
     paperweight.paperDevBundle("1.21.1-R0.1-SNAPSHOT")
     compileOnly("com.github.booksaw:BetterTeams:4.15.2")
+    implementation("org.bstats:bstats-bukkit:3.1.0")
 }
 
 java {
@@ -26,6 +28,14 @@ java {
 tasks {
     assemble {
         dependsOn(reobfJar)
+    }
+
+    named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
+        configurations = listOf(project.configurations.runtimeClasspath.get())
+        dependencies {
+            exclude { it.moduleGroup != "org.bstats" }
+        }
+        relocate("org.bstats", "${project.group}.bstats")
     }
 
     compileJava {

@@ -2,6 +2,7 @@ package net.opmasterleo.multiinvsync;
 
 import java.util.logging.Level;
 
+import org.bstats.bukkit.Metrics;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import net.opmasterleo.multiinvsync.api.MultiInvSyncAPI;
@@ -57,6 +58,9 @@ public class MultiInvSyncPlugin extends JavaPlugin {
             syncManager.initialize();
             
             api = new MultiInvSyncAPIImpl(this);
+            
+            int pluginId = 29073;
+            Metrics metrics = new Metrics(this, pluginId);
             
             registerListeners();
             registerCommands();
