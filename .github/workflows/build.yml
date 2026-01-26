@@ -93,18 +93,21 @@ jobs:
         shell: bash
         run: |
           git fetch --tags --quiet
-          LAST_TAG=$(git describe --tags --abbrev=0 --match "v*" 2>/dev/null || echo "")
+          LAST_TAG=$(git describe --tags --abbrev=0 --match "v*-b*" 2>/dev/null || echo "")
           if [ -z "$LAST_TAG" ]; then
-            RANGE="HEAD"
+            RANGE="${GITHUB_SHA}"
+            COMMITS=$(git log --no-merges --pretty=format:"- %s (%h)" -n 20 || true)
           else
-            RANGE="$LAST_TAG..HEAD"
+            RANGE="$LAST_TAG..${GITHUB_SHA}"
+            COMMITS=$(git log --no-merges --pretty=format:"- %s (%h)" $RANGE || true)
           fi
-          COMMITS=$(git log --no-merges --pretty=format:"- %s (%h)" $RANGE || true)
           if [ -z "$COMMITS" ]; then
             COMMITS="- Maintenance build"
           fi
-          echo -e "## Changes\n$COMMITS\n\n" > release_notes.md
+          COMMIT_COUNT=$(echo "$COMMITS" | wc -l)
+          echo -e "## Changes (${COMMIT_COUNT} commits)\n$COMMITS\n\n" > release_notes.md
           echo "last_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+          echo "commit_count=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Create Git tag
         if: github.event_name == 'push'
@@ -121,7 +124,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tagstep.outputs.tag }}
-          name: "MultiPlayerInvSync v${{ steps.meta.outputs.version }} (build ${{ env.BUILD_NUMBER }})"
+          name: "MultiPlayerInvSync v${{ steps.meta.outputs.version }} (build ${{ env.BUILD_NUMBER }}) - ${{ steps.notes.outputs.commit_count }} commits"
           body_path: release_notes.md
           files: build/out/${{ steps.meta.outputs.artifact }}
           draft: false
