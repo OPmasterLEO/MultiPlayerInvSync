@@ -31,6 +31,7 @@ public class InventorySyncManager {
     private final List<SyncBatch> pendingBatches = new CopyOnWriteArrayList<>();
     private final Set<UUID> syncingNow = ConcurrentHashMap.newKeySet();
     private final Set<UUID> processingSync = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> queuedSync = ConcurrentHashMap.newKeySet();
     
     public InventorySyncManager(MultiInvSyncPlugin plugin) {
         this.plugin = plugin;
@@ -50,6 +51,23 @@ public class InventorySyncManager {
         pendingBatches.clear();
     }
     
+    public void requestSync(Player source, long delayTicks, boolean persist) {
+        UUID id = source.getUniqueId();
+        if (!queuedSync.add(id)) {
+            return;
+        }
+        plugin.getScheduler().runMainLater(() -> {
+            queuedSync.remove(id);
+            if (!source.isOnline()) {
+                return;
+            }
+            syncInventory(source);
+            if (persist && plugin.getCrossServerSyncManager() != null && plugin.getCrossServerSyncManager().isEnabled()) {
+                plugin.getCrossServerSyncManager().saveInventoryToRedis(source, true);
+            }
+        }, delayTicks);
+    }
+
     public void syncInventory(Player source) {
         UUID sourceId = source.getUniqueId();
         if (bypassPlayers.contains(sourceId)) {
@@ -86,8 +104,6 @@ public class InventorySyncManager {
                 // Distribute to targets
                 for (Player target : targets) {
                     if (target.getUniqueId().equals(sourceId)) continue;
-                    
-                    // Schedule apply on Target Region/Thread
                     plugin.getScheduler().runAtEntity(target, () -> applySnapshot(target, snapshot));
                 }
                 
@@ -314,15 +330,12 @@ public class InventorySyncManager {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
             if (isCreativeSetSlot(msg)) {
-                // Creative slot changes finalize after server tick
-                plugin.getScheduler().runAtEntityLater(player, () -> syncInventory(player), 2L);
+                plugin.getScheduler().runAtEntityLater(player, () -> requestSync(player, 2L, true), 0L);
             } else if (isInventoryMutationPacket(msg)) {
-                // Std Sync: Delay 1 tick to ensure server processes the mutation (click/drop/swap)
-                // This prevents syncing the "old" state (pre-transaction) which causes ghost items
                 long now = System.nanoTime();
                 if (now - lastPacketTime > 500_000) {
                     lastPacketTime = now;
-                    plugin.getScheduler().runAtEntityLater(player, () -> syncInventory(player), 1L);
+                    plugin.getScheduler().runAtEntityLater(player, () -> requestSync(player, 1L, true), 0L);
                 }
             }
             super.channelRead(ctx, msg);

@@ -23,15 +23,7 @@ public class InventoryListener implements Listener {
     }
 
     private void triggerSync(Player player) {
-        // Immediate main-thread sync for Bukkit event sources (inventory clicks, item pickup, etc.)
-        plugin.getScheduler().runMain(() -> {
-            plugin.getSyncManager().syncInventory(player);
-            
-            // Also save to Redis if cross-server sync enabled
-            if (plugin.getCrossServerSyncManager() != null && plugin.getCrossServerSyncManager().isEnabled()) {
-                plugin.getCrossServerSyncManager().saveInventoryToRedis(player, true);
-            }
-        });
+        plugin.getSyncManager().requestSync(player, 1L, true);
     }
     
     // Removed onInventoryClick, onInventoryDrag, onPlayerDropItem, onPlayerSwapHandItems 

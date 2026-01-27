@@ -35,7 +35,7 @@ public class PlayerListener implements Listener {
             plugin.getScheduler().runMainLater(() -> {
                 Player source = findSourceFor(player);
                 if (source != null) {
-                    plugin.getSyncManager().syncInventory(source);
+                    plugin.getSyncManager().requestSync(source, 1L, false);
                     if (plugin.getConfigManager().isSyncMoney() && plugin.getEconomySyncManager() != null) {
                         plugin.getEconomySyncManager().syncBalanceFromSource(source);
                     }
@@ -81,7 +81,7 @@ public class PlayerListener implements Listener {
             msg.startsWith("/loot") || msg.startsWith("/clear") || msg.startsWith("/kit") ||
             msg.startsWith("/replaceitem") || msg.startsWith("/mi ") || msg.startsWith("/essentials:give")) {
             // Sync 1 tick after command execution to ensure item is in inventory
-            plugin.getScheduler().runMainLater(() -> plugin.getSyncManager().syncInventory(event.getPlayer()), 1L);
+            plugin.getSyncManager().requestSync(event.getPlayer(), 1L, true);
         }
     }
 
@@ -90,7 +90,7 @@ public class PlayerListener implements Listener {
         if (!plugin.getConfigManager().isSyncExperience()) {
             return;
         }
-        plugin.getScheduler().runMainLater(() -> plugin.getSyncManager().syncInventory(event.getPlayer()), 1L);
+        plugin.getSyncManager().requestSync(event.getPlayer(), 1L, true);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -98,7 +98,7 @@ public class PlayerListener implements Listener {
         if (!plugin.getConfigManager().isSyncExperience()) {
             return;
         }
-        plugin.getScheduler().runMainLater(() -> plugin.getSyncManager().syncInventory(event.getPlayer()), 1L);
+        plugin.getSyncManager().requestSync(event.getPlayer(), 1L, true);
     }
     
     @EventHandler(priority = EventPriority.HIGHEST)
