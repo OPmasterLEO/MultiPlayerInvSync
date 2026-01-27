@@ -55,6 +55,10 @@ public class InventorySyncManager {
         if (bypassPlayers.contains(sourceId)) {
             return;
         }
+
+        if (processingSync.contains(sourceId)) {
+            return;
+        }
         
         long currentTime = System.currentTimeMillis();
         Long lastSync = lastSyncTime.get(sourceId);

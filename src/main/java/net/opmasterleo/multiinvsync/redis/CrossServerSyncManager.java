@@ -37,6 +37,7 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
     private final Set<UUID> savingNow = ConcurrentHashMap.newKeySet();
     private final Set<UUID> loadingNow = ConcurrentHashMap.newKeySet();
     private final Map<UUID, Long> lastSaveVersion = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> appliedVersion = new ConcurrentHashMap<>();
     private final Map<UUID, Long> pendingLoads = new ConcurrentHashMap<>();
     
     private volatile boolean enabled = false;
@@ -138,6 +139,7 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
                 InventoryData data = redisStorage.loadInventory(playerId);
                 if (data != null) {
                     applyInventoryFromRedis(player, data);
+                    appliedVersion.put(playerId, data.version);
                     logger.info(player.getName() + "'s inventory loaded from Redis (v" + data.version + ")");
                 }
                 
@@ -201,6 +203,7 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
                 long version = redisStorage.saveInventory(playerId, data);
                 if (version > 0) {
                     lastSaveVersion.put(playerId, version);
+                    appliedVersion.put(playerId, version);
                     
                     // Broadcast update if from local sync (inventory change)
                     if (fromLocalSync && !loadingNow.contains(playerId)) {
@@ -276,8 +279,10 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
         // Load and apply updated inventory
         plugin.getScheduler().runAtEntity(player, () -> {
             InventoryData data = redisStorage.loadInventory(message.playerId);
-            if (data != null && data.version >= message.version) {
+            long current = appliedVersion.getOrDefault(message.playerId, 0L);
+            if (data != null && data.version >= message.version && data.version > current) {
                 applyInventoryFromRedis(player, data);
+                appliedVersion.put(message.playerId, data.version);
             }
         });
     }
@@ -294,8 +299,10 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
             // Player is already here, force reload
             plugin.getScheduler().runAtEntity(player, () -> {
                 InventoryData data = redisStorage.loadInventory(playerId);
-                if (data != null) {
+                long current = appliedVersion.getOrDefault(playerId, 0L);
+                if (data != null && data.version > current) {
                     applyInventoryFromRedis(player, data);
+                    appliedVersion.put(playerId, data.version);
                     logger.info(player.getName() + "'s inventory synced after server switch");
                 }
             });

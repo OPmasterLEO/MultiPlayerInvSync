@@ -105,20 +105,20 @@ public class RedisInventoryStorage {
                 
                 JsonObject root = gson.fromJson(inventoryJson, JsonObject.class);
                 InventoryData data = new InventoryData();
-                data.version = root.get("version").getAsLong();
-                data.timestamp = root.get("timestamp").getAsLong();
-                data.mainInventory = deserializeItems(root.getAsJsonArray("mainInventory"), 36);
-                data.armorContents = deserializeItems(root.getAsJsonArray("armorContents"), 4);
-                data.offhand = deserializeItem(root.get("offhand"));
-                data.enderChest = deserializeItems(root.getAsJsonArray("enderChest"), 27);
-                data.cursor = deserializeItem(root.get("cursor"));
+                data.version = root.get("v").getAsLong();
+                data.timestamp = root.get("t").getAsLong();
+                data.mainInventory = deserializeItems(root.getAsJsonArray("i"), 36);
+                data.armorContents = deserializeItems(root.getAsJsonArray("a"), 4);
+                data.offhand = deserializeItem(root.get("o"));
+                data.enderChest = deserializeItems(root.getAsJsonArray("e"), 27);
+                data.cursor = deserializeItem(root.get("c"));
                 
                 String xpJson = jedis.get(xpKey);
                 if (xpJson != null) {
                     JsonObject xpData = gson.fromJson(xpJson, JsonObject.class);
-                    data.xpLevel = xpData.get("level").getAsInt();
-                    data.xpTotal = xpData.get("total").getAsInt();
-                    data.xpExp = xpData.get("exp").getAsFloat();
+                    data.xpLevel = xpData.get("l").getAsInt();
+                    data.xpTotal = xpData.get("x").getAsInt();
+                    data.xpExp = xpData.get("p").getAsFloat();
                 }
                 
                 logger.fine("Loaded inventory for " + playerId + " (version: " + data.version + ")");
@@ -241,7 +241,7 @@ public class RedisInventoryStorage {
         }
         try {
             CompoundTag tag = new CompoundTag();
-            item.save(null, tag);
+            item.save(tag);
             return NbtUtils.structureToSnbt(tag);
         } catch (Exception e) {
             logger.warning("Failed to serialize item: " + e.getMessage());
