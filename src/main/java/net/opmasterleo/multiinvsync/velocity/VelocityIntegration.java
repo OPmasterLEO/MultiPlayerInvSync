@@ -49,6 +49,7 @@ public class VelocityIntegration implements PluginMessageListener {
         this.plugin = plugin;
         this.logger = logger;
         this.switchHandler = switchHandler;
+        this.currentServerId = plugin.getServer().getServerName();
     }
     
     /**

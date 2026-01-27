@@ -20,6 +20,8 @@ public class RedisPubSubManager {
     private final Gson gson;
     private final ExecutorService executor;
     private final String serverId;
+    private final String channelGlobal;
+    private final String channelServer;
     
     private Jedis subscriberConnection;
     private MessageSubscriber subscriber;
@@ -30,6 +32,8 @@ public class RedisPubSubManager {
         this.logger = logger;
         this.gson = new Gson();
         this.serverId = serverId;
+        this.channelGlobal = "mis:g";
+        this.channelServer = "mis:u:" + serverId;
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "Redis-PubSub-Subscriber");
             t.setDaemon(true);
@@ -54,10 +58,7 @@ public class RedisPubSubManager {
                 subscriberConnection = redis.getResource();
                 logger.info("Subscribing to Redis channels...");
                 
-                subscriberConnection.subscribe(subscriber, 
-                    "mis:u:" + serverId,
-                    "mis:g"
-                );
+                subscriberConnection.subscribe(subscriber, channelServer, channelGlobal);
             } catch (Exception e) {
                 logger.log(Level.SEVERE, "Redis Pub/Sub connection failed", e);
                 running = false;
@@ -78,9 +79,22 @@ public class RedisPubSubManager {
         message.addProperty("targetServer", targetServerId);
         message.addProperty("version", version);
         message.addProperty("timestamp", System.currentTimeMillis());
-        
-        String channel = "misinv:updates:" + targetServerId;
-        publish(channel, message.toString());
+        publish("mis:u:" + targetServerId, message.toString());
+    }
+
+    public void broadcastInventoryUpdate(UUID playerId, long version, String teamId) {
+        JsonObject message = new JsonObject();
+        message.addProperty("type", "INVENTORY_UPDATE");
+        message.addProperty("playerId", playerId.toString());
+        message.addProperty("sourceServer", serverId);
+        message.addProperty("version", version);
+        message.addProperty("timestamp", System.currentTimeMillis());
+        if (teamId != null) {
+            message.addProperty("teamId", teamId);
+            publish("mis:t:" + teamId, message.toString());
+        } else {
+            publish(channelGlobal, message.toString());
+        }
     }
     
     /**
@@ -108,12 +122,11 @@ public class RedisPubSubManager {
         message.addProperty("playerId", playerId.toString());
         message.addProperty("sourceServer", serverId);
         message.addProperty("timestamp", System.currentTimeMillis());
-        
         if (teamId != null) {
             message.addProperty("teamId", teamId);
             publish("mis:t:" + teamId, message.toString());
         } else {
-            publish("mis:g", message.toString());
+            publish(channelGlobal, message.toString());
         }
     }
     
@@ -127,12 +140,11 @@ public class RedisPubSubManager {
         message.addProperty("sourceServer", serverId);
         message.addProperty("balance", balance);
         message.addProperty("timestamp", System.currentTimeMillis());
-        
         if (teamId != null) {
             message.addProperty("teamId", teamId);
             publish("mis:t:" + teamId, message.toString());
         } else {
-            publish("mis:g", message.toString());
+            publish(channelGlobal, message.toString());
         }
     }
     

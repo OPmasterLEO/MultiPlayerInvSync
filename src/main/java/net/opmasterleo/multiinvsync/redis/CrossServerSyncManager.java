@@ -39,6 +39,8 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
     private final Map<UUID, Long> lastSaveVersion = new ConcurrentHashMap<>();
     private final Map<UUID, Long> appliedVersion = new ConcurrentHashMap<>();
     private final Map<UUID, Long> pendingLoads = new ConcurrentHashMap<>();
+    private final Map<String, Integer> teamPresence = new ConcurrentHashMap<>();
+    private final Set<String> subscribedTeams = ConcurrentHashMap.newKeySet();
     
     private volatile boolean enabled = false;
     private String serverId;
@@ -109,6 +111,12 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
             
             enabled = true;
             logger.info("Cross-server sync enabled (Server: " + serverId + ")");
+
+            if (config.isTeamsEnabled()) {
+                for (Player online : plugin.getServer().getOnlinePlayers()) {
+                    updateTeamSubscription(online, true);
+                }
+            }
         }, 40L);
         
         return true;
@@ -134,6 +142,7 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
             try {
                 // Register player on this server
                 redisStorage.registerPlayer(playerId, serverId);
+                updateTeamSubscription(player, true);
                 
                 // Load inventory from Redis
                 InventoryData data = redisStorage.loadInventory(playerId);
@@ -177,6 +186,7 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
         
         // Unregister from this server
         redisStorage.unregisterPlayer(playerId, serverId);
+        updateTeamSubscription(player, false);
     }
     
     /**
@@ -229,19 +239,8 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
      */
     private void broadcastInventoryUpdate(Player player, long version) {
         if (!enabled || pubSubManager == null) return;
-        
-        // In global mode, we don't need to broadcast since other servers
-        // will detect changes through their own local sync
-        // Only needed for team mode where specific servers need notification
-        
-        if (config.isTeamsEnabled()) {
-            // Get team members on other servers and notify those servers
-            // For now, broadcast globally - can optimize later
-            String teamId = getPlayerTeamId(player);
-            if (teamId != null) {
-                pubSubManager.broadcastEconomyUpdate(player.getUniqueId(), 0, teamId);
-            }
-        }
+        String teamId = config.isTeamsEnabled() ? getPlayerTeamId(player) : null;
+        pubSubManager.broadcastInventoryUpdate(player.getUniqueId(), version, teamId);
     }
     
     /**
@@ -444,12 +443,11 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
     }
     
     private String getPlayerTeamId(Player player) {
-        if (plugin.getTeamManager() != null) {
-            // Get team ID from team manager
-            // Placeholder - implement based on your team system
+        if (plugin.getTeamManager() == null) {
             return null;
         }
-        return null;
+        UUID team = plugin.getTeamManager().getTeamId(player);
+        return team != null ? team.toString() : null;
     }
     
     public void shutdown() {
@@ -472,5 +470,26 @@ public class CrossServerSyncManager implements VelocityIntegration.ServerSwitchH
     
     public String getServerId() {
         return serverId;
+    }
+
+    private void updateTeamSubscription(Player player, boolean join) {
+        String teamId = getPlayerTeamId(player);
+        if (teamId == null || !config.isTeamsEnabled() || pubSubManager == null) {
+            return;
+        }
+        teamPresence.compute(teamId, (id, count) -> {
+            int current = count == null ? 0 : count;
+            int updated = join ? current + 1 : Math.max(0, current - 1);
+            if (updated == 0) {
+                if (subscribedTeams.remove(id)) {
+                    pubSubManager.unsubscribeFromTeam(id);
+                }
+                return null;
+            }
+            if (join && subscribedTeams.add(id)) {
+                pubSubManager.subscribeToTeam(id);
+            }
+            return updated;
+        });
     }
 }
