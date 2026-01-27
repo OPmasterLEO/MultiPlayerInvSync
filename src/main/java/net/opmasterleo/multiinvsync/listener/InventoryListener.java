@@ -23,7 +23,7 @@ public class InventoryListener implements Listener {
     }
 
     private void triggerSync(Player player) {
-        plugin.getSyncManager().requestSync(player, 1L, true);
+        plugin.getSyncManager().requestSync(player, 2L, true);
     }
     
     // Removed onInventoryClick, onInventoryDrag, onPlayerDropItem, onPlayerSwapHandItems 

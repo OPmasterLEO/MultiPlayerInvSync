@@ -81,7 +81,7 @@ public class PlayerListener implements Listener {
             msg.startsWith("/loot") || msg.startsWith("/clear") || msg.startsWith("/kit") ||
             msg.startsWith("/replaceitem") || msg.startsWith("/mi ") || msg.startsWith("/essentials:give")) {
             // Sync 1 tick after command execution to ensure item is in inventory
-            plugin.getSyncManager().requestSync(event.getPlayer(), 1L, true);
+            plugin.getSyncManager().requestSync(event.getPlayer(), 2L, true);
         }
     }
 
@@ -90,7 +90,7 @@ public class PlayerListener implements Listener {
         if (!plugin.getConfigManager().isSyncExperience()) {
             return;
         }
-        plugin.getSyncManager().requestSync(event.getPlayer(), 1L, true);
+        plugin.getSyncManager().requestSync(event.getPlayer(), 2L, true);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -98,7 +98,7 @@ public class PlayerListener implements Listener {
         if (!plugin.getConfigManager().isSyncExperience()) {
             return;
         }
-        plugin.getSyncManager().requestSync(event.getPlayer(), 1L, true);
+        plugin.getSyncManager().requestSync(event.getPlayer(), 2L, true);
     }
     
     @EventHandler(priority = EventPriority.HIGHEST)

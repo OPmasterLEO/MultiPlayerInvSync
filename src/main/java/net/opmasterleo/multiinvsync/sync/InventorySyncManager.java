@@ -21,6 +21,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.nbt.CompoundTag;
 import net.opmasterleo.multiinvsync.MultiInvSyncPlugin;
 
 public class InventorySyncManager {
@@ -32,6 +33,7 @@ public class InventorySyncManager {
     private final Set<UUID> syncingNow = ConcurrentHashMap.newKeySet();
     private final Set<UUID> processingSync = ConcurrentHashMap.newKeySet();
     private final Set<UUID> queuedSync = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, Long> snapshotSignatures = new ConcurrentHashMap<>();
     
     public InventorySyncManager(MultiInvSyncPlugin plugin) {
         this.plugin = plugin;
@@ -56,6 +58,7 @@ public class InventorySyncManager {
         if (!queuedSync.add(id)) {
             return;
         }
+        long delay = Math.max(1L, delayTicks);
         plugin.getScheduler().runMainLater(() -> {
             queuedSync.remove(id);
             if (!source.isOnline()) {
@@ -97,6 +100,12 @@ public class InventorySyncManager {
                 if (!source.isOnline()) return;
                 
                 InventorySnapshot snapshot = captureSnapshot(source);
+                long signature = snapshot.computeSignature();
+                Long lastSig = snapshotSignatures.get(sourceId);
+                if (lastSig != null && lastSig == signature) {
+                    return;
+                }
+                snapshotSignatures.put(sourceId, signature);
                 Collection<Player> targets = getTargetPlayers(source);
                 
                 if (targets.isEmpty() || (targets.size() == 1 && targets.contains(source))) return;
@@ -244,6 +253,36 @@ public class InventorySyncManager {
             this.xpTotal = xpTotal;
             this.xpExp = xpExp;
         }
+
+        long computeSignature() {
+            long h = 1125899906842597L;
+            for (ItemStack stack : items) {
+                h = 31 * h + fastHash(stack);
+            }
+            for (ItemStack stack : enderItems) {
+                h = 31 * h + fastHash(stack);
+            }
+            h = 31 * h + fastHash(cursorItem);
+            h = 31 * h + xpLevel;
+            h = 31 * h + xpTotal;
+            h = 31 * h + Float.floatToIntBits(xpExp);
+            return h;
+        }
+
+        private long fastHash(ItemStack stack) {
+            if (stack == null || stack.isEmpty()) {
+                return 0L;
+            }
+            long h = stack.getItem().hashCode();
+            h = 31 * h + stack.getCount();
+            try {
+                CompoundTag tag = new CompoundTag();
+                stack.save(null, tag);
+                h = 31 * h + tag.hashCode();
+            } catch (Exception ignored) {
+            }
+            return h;
+        }
     }
     
     
@@ -330,12 +369,12 @@ public class InventorySyncManager {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
             if (isCreativeSetSlot(msg)) {
-                plugin.getScheduler().runAtEntityLater(player, () -> requestSync(player, 2L, true), 0L);
+                plugin.getScheduler().runAtEntityLater(player, () -> requestSync(player, 3L, true), 0L);
             } else if (isInventoryMutationPacket(msg)) {
                 long now = System.nanoTime();
                 if (now - lastPacketTime > 500_000) {
                     lastPacketTime = now;
-                    plugin.getScheduler().runAtEntityLater(player, () -> requestSync(player, 1L, true), 0L);
+                    plugin.getScheduler().runAtEntityLater(player, () -> requestSync(player, 2L, true), 0L);
                 }
             }
             super.channelRead(ctx, msg);

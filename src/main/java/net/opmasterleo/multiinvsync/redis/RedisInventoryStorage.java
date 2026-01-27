@@ -241,7 +241,7 @@ public class RedisInventoryStorage {
         }
         try {
             CompoundTag tag = new CompoundTag();
-            item.save(tag);
+            item.save(null, tag);
             return NbtUtils.structureToSnbt(tag);
         } catch (Exception e) {
             logger.warning("Failed to serialize item: " + e.getMessage());
