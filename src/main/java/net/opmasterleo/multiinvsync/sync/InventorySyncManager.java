@@ -7,7 +7,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.bukkit.Bukkit;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
@@ -21,9 +20,9 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.nbt.CompoundTag;
 import net.opmasterleo.multiinvsync.MultiInvSyncPlugin;
 
 public class InventorySyncManager {
@@ -31,14 +30,42 @@ public class InventorySyncManager {
     private final MultiInvSyncPlugin plugin;
     private final Map<UUID, Long> lastSyncTime = new ConcurrentHashMap<>();
     private final Set<UUID> bypassPlayers = ConcurrentHashMap.newKeySet();
-    private final List<SyncBatch> pendingBatches = new CopyOnWriteArrayList<>();
     private final Set<UUID> syncingNow = ConcurrentHashMap.newKeySet();
     private final Set<UUID> processingSync = ConcurrentHashMap.newKeySet();
     private final Set<UUID> queuedSync = ConcurrentHashMap.newKeySet();
     private final Map<UUID, Long> snapshotSignatures = new ConcurrentHashMap<>();
     
+    private volatile boolean syncMainInventory;
+    private volatile boolean syncArmor;
+    private volatile boolean syncOffhand;
+    private volatile boolean syncEnderChest;
+    private volatile boolean syncCursor;
+    private volatile boolean syncExperience;
+    private volatile boolean syncHealth;
+    private volatile boolean syncHunger;
+    private volatile boolean syncPose;
+    private volatile boolean syncEffects;
+    private volatile int syncDelayTicks;
+    private volatile boolean logSyncEvents;
+    
     public InventorySyncManager(MultiInvSyncPlugin plugin) {
         this.plugin = plugin;
+        refreshConfigCache();
+    }
+    
+    public final void refreshConfigCache() {
+        syncMainInventory = plugin.getConfigManager().isSyncMainInventory();
+        syncArmor = plugin.getConfigManager().isSyncArmor();
+        syncOffhand = plugin.getConfigManager().isSyncOffhand();
+        syncEnderChest = plugin.getConfigManager().isSyncEnderChest();
+        syncCursor = plugin.getConfigManager().isSyncCursor();
+        syncExperience = plugin.getConfigManager().isSyncExperience();
+        syncHealth = plugin.getConfigManager().isSyncHealth();
+        syncHunger = plugin.getConfigManager().isSyncHunger();
+        syncPose = plugin.getConfigManager().isSyncPose();
+        syncEffects = plugin.getConfigManager().isSyncEffects();
+        syncDelayTicks = plugin.getConfigManager().getSyncDelayTicks();
+        logSyncEvents = plugin.getConfigManager().isLogSyncEvents();
     }
     
     public void initialize() {
@@ -52,7 +79,6 @@ public class InventorySyncManager {
         for (Player player : Bukkit.getOnlinePlayers()) {
             uninjectPlayer(player);
         }
-        pendingBatches.clear();
     }
     
     public void requestSync(Player source, long delayTicks, boolean persist) {
@@ -60,7 +86,6 @@ public class InventorySyncManager {
         if (!queuedSync.add(id)) {
             return;
         }
-        long delay = Math.max(1L, delayTicks);
         plugin.getScheduler().runMainLater(() -> {
             queuedSync.remove(id);
             if (!source.isOnline()) {
@@ -86,8 +111,7 @@ public class InventorySyncManager {
         long currentTime = System.currentTimeMillis();
         Long lastSync = lastSyncTime.get(sourceId);
         
-        int delayTicks = plugin.getConfigManager().getSyncDelayTicks();
-        if (lastSync != null && currentTime - lastSync < (delayTicks * 50L)) {
+        if (lastSync != null && currentTime - lastSync < (syncDelayTicks * 50L)) {
             return;
         }
         
@@ -118,12 +142,13 @@ public class InventorySyncManager {
                     plugin.getScheduler().runAtEntity(target, () -> applySnapshot(target, snapshot));
                 }
                 
-                if (plugin.getConfigManager().isLogSyncEvents()) {
-                    plugin.getLogger().info("Synced inventory from " + source.getName() + 
-                        " to " + (targets.size() - 1) + " players");
+                if (logSyncEvents) {
+                    int targetCount = targets.size() - 1;
+                    plugin.getLogger().info(String.format("Synced inventory from %s to %d players", 
+                        source.getName(), targetCount));
                 }
             } catch (Exception e) {
-                plugin.getLogger().warning("Sync error: " + e.getMessage());
+                plugin.getLogger().log(java.util.logging.Level.WARNING, "Sync error", e);
             } finally {
                 syncingNow.remove(sourceId);
             }
@@ -131,7 +156,8 @@ public class InventorySyncManager {
     }
 
     private InventorySnapshot captureSnapshot(Player source) {
-        List<ItemStack> items = new ArrayList<>(45);
+        int itemCapacity = (syncMainInventory ? 36 : 0) + (syncArmor ? 4 : 0) + (syncOffhand ? 1 : 0);
+        List<ItemStack> items = itemCapacity > 0 ? new ArrayList<>(itemCapacity) : null;
         PlayerInventory inv = source.getInventory();
         int srcLevel = 0;
         int srcTotalXp = 0;
@@ -142,56 +168,60 @@ public class InventorySyncManager {
         Pose pose = null;
         Collection<PotionEffect> effects = null;
 
-        if (plugin.getConfigManager().isSyncMainInventory()) {
+        if (syncMainInventory) {
             for (int i = 0; i < 36; i++) {
                 items.add(CraftItemStack.asNMSCopy(inv.getItem(i)));
             }
         }
         
-        if (plugin.getConfigManager().isSyncArmor()) {
+        if (syncArmor && items != null) {
             items.add(CraftItemStack.asNMSCopy(inv.getHelmet()));
             items.add(CraftItemStack.asNMSCopy(inv.getChestplate()));
             items.add(CraftItemStack.asNMSCopy(inv.getLeggings()));
             items.add(CraftItemStack.asNMSCopy(inv.getBoots()));
         }
         
-        if (plugin.getConfigManager().isSyncOffhand()) {
+        if (syncOffhand && items != null) {
             items.add(CraftItemStack.asNMSCopy(inv.getItemInOffHand()));
         }
 
         ItemStack cursorItem = null;
-        if (plugin.getConfigManager().isSyncCursor()) {
+        if (syncCursor) {
             cursorItem = CraftItemStack.asNMSCopy(source.getItemOnCursor());
         }
 
-        List<ItemStack> enderItems = new ArrayList<>(27);
-        if (plugin.getConfigManager().isSyncEnderChest()) {
+        List<ItemStack> enderItems = null;
+        if (syncEnderChest) {
+            enderItems = new ArrayList<>(27);
             for (int i = 0; i < 27; i++) {
                 enderItems.add(CraftItemStack.asNMSCopy(source.getEnderChest().getItem(i)));
             }
         }
         
-        if (plugin.getConfigManager().isSyncExperience()) {
+        if (syncExperience) {
             srcLevel = source.getLevel();
             srcTotalXp = source.getTotalExperience();
             srcExp = source.getExp();
         }
         
-        if (plugin.getConfigManager().isSyncHealth()) {
+        if (syncHealth) {
             health = source.getHealth();
         }
         
-        if (plugin.getConfigManager().isSyncHunger()) {
+        if (syncHunger) {
             foodLevel = source.getFoodLevel();
             saturation = source.getSaturation();
         }
         
-        if (plugin.getConfigManager().isSyncPose()) {
+        if (syncPose) {
             pose = source.getPose();
         }
         
-        if (plugin.getConfigManager().isSyncEffects()) {
-            effects = new ArrayList<>(source.getActivePotionEffects());
+        if (syncEffects) {
+            Collection<PotionEffect> activeEffects = source.getActivePotionEffects();
+            if (!activeEffects.isEmpty()) {
+                effects = new ArrayList<>(activeEffects);
+            }
         }
         
         return new InventorySnapshot(items, enderItems, cursorItem, srcLevel, srcTotalXp, srcExp, 
@@ -201,88 +231,134 @@ public class InventorySyncManager {
     private void applySnapshot(Player target, InventorySnapshot snapshot) {
         if (!target.isOnline()) return;
 
-        processingSync.add(target.getUniqueId());
+        UUID targetId = target.getUniqueId();
+        if (!processingSync.add(targetId)) {
+            return;
+        }
+        
         try {
             ServerPlayer nmsTarget = ((CraftPlayer) target).getHandle();
             PlayerInventory targetInv = target.getInventory();
-            List<ItemStack> items = snapshot.items;
-            int slot = 0;
+            
+            if (snapshot.items != null) {
+                int slot = 0;
+                if (syncMainInventory) {
+                    for (int i = 0; i < 36 && slot < snapshot.items.size(); i++) {
+                        setItemIfChanged(targetInv, i, snapshot.items.get(slot++));
+                    }
+                }
 
-            if (plugin.getConfigManager().isSyncMainInventory()) {
-                for (int i = 0; i < 36 && slot < items.size(); i++) {
-                    setItemIfChanged(targetInv, i, items.get(slot++));
+                if (syncArmor && slot + 3 < snapshot.items.size()) {
+                    setItemIfChanged(targetInv, 39, snapshot.items.get(slot++)); // Helmet
+                    setItemIfChanged(targetInv, 38, snapshot.items.get(slot++)); // Chest
+                    setItemIfChanged(targetInv, 37, snapshot.items.get(slot++)); // Legs
+                    setItemIfChanged(targetInv, 36, snapshot.items.get(slot++)); // Boots
+                }
+
+                if (syncOffhand && slot < snapshot.items.size()) {
+                    setItemIfChanged(targetInv, 40, snapshot.items.get(slot));
                 }
             }
-
-            if (plugin.getConfigManager().isSyncArmor() && slot + 3 < items.size()) {
-                setItemIfChanged(targetInv, 39, items.get(slot++)); // Helmet
-                setItemIfChanged(targetInv, 38, items.get(slot++)); // Chest
-                setItemIfChanged(targetInv, 37, items.get(slot++)); // Legs
-                setItemIfChanged(targetInv, 36, items.get(slot++)); // Boots
-            }
-
-            if (plugin.getConfigManager().isSyncOffhand() && slot < items.size()) {
-                setItemIfChanged(targetInv, 40, items.get(slot));
-            }
             
-            if (plugin.getConfigManager().isSyncCursor() && snapshot.cursorItem != null) {
+            if (syncCursor && snapshot.cursorItem != null) {
                 target.setItemOnCursor(CraftItemStack.asBukkitCopy(snapshot.cursorItem));
             }
 
-            if (plugin.getConfigManager().isSyncEnderChest()) {
-                List<ItemStack> enderItems = snapshot.enderItems;
-                for (int i = 0; i < 27 && i < enderItems.size(); i++) {
-                    // Ender chest doesn't use standard slot indices in same way for event triggers, but setItem is safe
-                    target.getEnderChest().setItem(i, CraftItemStack.asBukkitCopy(enderItems.get(i)));
+            if (syncEnderChest && snapshot.enderItems != null) {
+                for (int i = 0; i < 27 && i < snapshot.enderItems.size(); i++) {
+                    target.getEnderChest().setItem(i, CraftItemStack.asBukkitCopy(snapshot.enderItems.get(i)));
                 }
             }
 
-            if (plugin.getConfigManager().isSyncExperience()) {
-                if (target.getTotalExperience() != snapshot.xpTotal) {
-                    target.setTotalExperience(snapshot.xpTotal);
-                    target.setLevel(snapshot.xpLevel);
-                    target.setExp(snapshot.xpExp);
-                }
+            if (syncExperience && target.getTotalExperience() != snapshot.xpTotal) {
+                target.setTotalExperience(snapshot.xpTotal);
+                target.setLevel(snapshot.xpLevel);
+                target.setExp(snapshot.xpExp);
             }
             
-            if (plugin.getConfigManager().isSyncHealth()) {
-                if (snapshot.health > 0 && target.getHealth() != snapshot.health) {
-                    double maxHealth = target.getMaxHealth();
+            if (syncHealth && snapshot.health > 0) {
+                double currentHealth = target.getHealth();
+                if (currentHealth != snapshot.health) {
+                    var maxHealthAttr = target.getAttribute(org.bukkit.attribute.Attribute.GENERIC_MAX_HEALTH);
+                    double maxHealth = maxHealthAttr != null ? maxHealthAttr.getValue() : 20.0;
                     target.setHealth(Math.min(snapshot.health, maxHealth));
                 }
             }
             
-            if (plugin.getConfigManager().isSyncHunger()) {
-                if (target.getFoodLevel() != snapshot.foodLevel) {
-                    target.setFoodLevel(snapshot.foodLevel);
-                }
-                if (target.getSaturation() != snapshot.saturation) {
-                    target.setSaturation(snapshot.saturation);
+            if (syncHunger) {
+                int currentFood = target.getFoodLevel();
+                float currentSat = target.getSaturation();
+                if (currentFood != snapshot.foodLevel || currentSat != snapshot.saturation) {
+                    if (currentFood != snapshot.foodLevel) {
+                        target.setFoodLevel(snapshot.foodLevel);
+                    }
+                    if (currentSat != snapshot.saturation) {
+                        target.setSaturation(snapshot.saturation);
+                    }
                 }
             }
             
-            if (plugin.getConfigManager().isSyncPose()) {
-                if (snapshot.pose != null && target.getPose() != snapshot.pose) {
-                    target.setPose(snapshot.pose, true);
-                }
+            if (syncPose && snapshot.pose != null && target.getPose() != snapshot.pose) {
+                target.setPose(snapshot.pose, true);
             }
             
-            if (plugin.getConfigManager().isSyncEffects()) {
-                if (snapshot.effects != null) {
-                    // Clear existing effects and apply new ones
-                    for (PotionEffect effect : target.getActivePotionEffects()) {
-                        target.removePotionEffect(effect.getType());
-                    }
-                    for (PotionEffect effect : snapshot.effects) {
-                        target.addPotionEffect(effect);
-                    }
-                }
+            if (syncEffects) {
+                syncPotionEffects(target, snapshot.effects);
             }
 
             // Always refresh container to ensure client view is correct
             sendInventoryUpdate(nmsTarget);
         } finally {
-            processingSync.remove(target.getUniqueId());
+            processingSync.remove(targetId);
+        }
+    }
+    
+    private void syncPotionEffects(Player target, Collection<PotionEffect> sourceEffects) {
+        if (sourceEffects == null || sourceEffects.isEmpty()) {
+            Collection<PotionEffect> currentEffects = target.getActivePotionEffects();
+            if (!currentEffects.isEmpty()) {
+                for (PotionEffect effect : currentEffects) {
+                    target.removePotionEffect(effect.getType());
+                }
+            }
+            return;
+        }
+        
+        Collection<PotionEffect> currentEffects = target.getActivePotionEffects();
+        
+        // Build a set of effect types from source for quick lookup
+        Set<org.bukkit.potion.PotionEffectType> sourceTypes = ConcurrentHashMap.newKeySet();
+        for (PotionEffect effect : sourceEffects) {
+            sourceTypes.add(effect.getType());
+        }
+        
+        // Remove effects that don't exist in source
+        for (PotionEffect currentEffect : currentEffects) {
+            if (!sourceTypes.contains(currentEffect.getType())) {
+                target.removePotionEffect(currentEffect.getType());
+            }
+        }
+        
+        // Add or update effects from source
+        for (PotionEffect sourceEffect : sourceEffects) {
+            boolean needsUpdate = true;
+            for (PotionEffect currentEffect : currentEffects) {
+                if (currentEffect.getType().equals(sourceEffect.getType())) {
+                    // Check if effect matches exactly
+                    if (currentEffect.getAmplifier() == sourceEffect.getAmplifier() &&
+                        currentEffect.getDuration() == sourceEffect.getDuration() &&
+                        currentEffect.hasParticles() == sourceEffect.hasParticles() &&
+                        currentEffect.isAmbient() == sourceEffect.isAmbient()) {
+                        needsUpdate = false;
+                    }
+                    break;
+                }
+            }
+            if (needsUpdate) {
+                target.addPotionEffect(new PotionEffect(sourceEffect.getType(), 
+                    sourceEffect.getDuration(), sourceEffect.getAmplifier(), 
+                    sourceEffect.isAmbient(), sourceEffect.hasParticles(), sourceEffect.hasIcon()));
+            }
         }
     }
     
@@ -327,11 +403,15 @@ public class InventorySyncManager {
 
         long computeSignature() {
             long h = 1125899906842597L;
-            for (ItemStack stack : items) {
-                h = 31 * h + fastHash(stack);
+            if (items != null) {
+                for (ItemStack stack : items) {
+                    h = 31 * h + fastHash(stack);
+                }
             }
-            for (ItemStack stack : enderItems) {
-                h = 31 * h + fastHash(stack);
+            if (enderItems != null) {
+                for (ItemStack stack : enderItems) {
+                    h = 31 * h + fastHash(stack);
+                }
             }
             h = 31 * h + fastHash(cursorItem);
             h = 31 * h + xpLevel;
@@ -340,10 +420,12 @@ public class InventorySyncManager {
             h = 31 * h + Double.hashCode(health);
             h = 31 * h + foodLevel;
             h = 31 * h + Float.floatToIntBits(saturation);
-            h = 31 * h + (pose != null ? pose.hashCode() : 0);
-            if (effects != null) {
+            h = 31 * h + (pose != null ? pose.ordinal() : 0);
+            if (effects != null && !effects.isEmpty()) {
                 for (PotionEffect effect : effects) {
-                    h = 31 * h + effect.hashCode();
+                    h = 31 * h + effect.getType().getKey().hashCode();
+                    h = 31 * h + effect.getAmplifier();
+                    h = 31 * h + effect.getDuration();
                 }
             }
             return h;
@@ -382,16 +464,15 @@ public class InventorySyncManager {
     
     public void clearAllInventories(Player diedPlayer, boolean clearDiedPlayer) {
         Collection<Player> targets = getTargetPlayers(diedPlayer);
+        UUID diedUUID = diedPlayer.getUniqueId();
         
         for (Player target : targets) {
-            if (target.getUniqueId().equals(diedPlayer.getUniqueId())) {
-                if (!clearDiedPlayer) {
-                    continue;
-                }
+            if (target.getUniqueId().equals(diedUUID) && !clearDiedPlayer) {
+                continue;
             }
             
             target.getInventory().clear();
-            if (plugin.getConfigManager().isSyncEnderChest()) {
+            if (syncEnderChest) {
                 target.getEnderChest().clear();
             }
         }
@@ -409,7 +490,8 @@ public class InventorySyncManager {
             channel.pipeline().addBefore("packet_handler", "multiinvsync_handler", 
                 new InventoryPacketHandler(player));
         } catch (Exception e) {
-            plugin.getLogger().warning("Failed to inject player: " + player.getName());
+            plugin.getLogger().log(java.util.logging.Level.WARNING, 
+                String.format("Failed to inject player: %s", player.getName()), e);
         }
     }
     
@@ -422,7 +504,8 @@ public class InventorySyncManager {
                 channel.pipeline().remove("multiinvsync_handler");
             }
         } catch (Exception e) {
-            plugin.getLogger().warning("Failed to uninject player: " + player.getName());
+            plugin.getLogger().log(java.util.logging.Level.WARNING, 
+                String.format("Failed to uninject player: %s", player.getName()), e);
         }
     }
     
@@ -490,26 +573,5 @@ public class InventorySyncManager {
         if (msg == null) return false;
         String name = msg.getClass().getSimpleName();
         return name.contains("SetCreativeModeSlot") || name.contains("CreativeInventoryAction");
-    }
-
-    private boolean isInventoryClientUpdate(Object msg) {
-        if (msg == null) return false;
-        String name = msg.getClass().getSimpleName();
-        // Outbound inventory updates from server to client; use name matching to stay version-agnostic
-        return name.contains("ClientboundContainerSetSlot")
-            || name.contains("ClientboundContainerSetContent")
-            || name.contains("SetSlot");
-    }
-    
-    private static class SyncBatch {
-        private final Player source;
-        private final List<Player> targets;
-        private final long timestamp;
-        
-        public SyncBatch(Player source, List<Player> targets) {
-            this.source = source;
-            this.targets = targets;
-            this.timestamp = System.currentTimeMillis();
-        }
     }
 }

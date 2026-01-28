@@ -151,17 +151,18 @@ public class MultiInvSyncPlugin extends JavaPlugin {
     
     public void reload() {
         configManager.load();
+        
         if (syncManager != null) {
-            syncManager.shutdown();
+            syncManager.refreshConfigCache();
         }
+        
         if (economySyncManager != null) {
             economySyncManager.shutdown();
         }
         if (crossServerSyncManager != null) {
             crossServerSyncManager.shutdown();
         }
-        syncManager = new InventorySyncManager(this);
-        syncManager.initialize();
+        
         economySyncManager = new EconomySyncManager(this);
         economySyncManager.initialize();
         teamManager.initialize();
