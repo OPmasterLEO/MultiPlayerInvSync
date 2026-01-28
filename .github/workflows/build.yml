@@ -83,7 +83,7 @@ jobs:
         shell: bash
         run: |
           # Get the latest release tag (excluding pre-releases if possible)
-          LATEST_TAG=$(git tag --list "v*" --sort=-creatordate | grep -v "build" | head -n 1)
+          LATEST_TAG=$(git tag --list "v*" --sort=-creatordate | grep -v "build" || true | head -n 1)
           
           if [ -z "$LATEST_TAG" ]; then
             echo "has_previous_release=false" >> "$GITHUB_OUTPUT"
