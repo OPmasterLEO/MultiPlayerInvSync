@@ -15,7 +15,7 @@ jobs:
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Ensure Gradle wrapper jar
         shell: bash
@@ -62,11 +62,166 @@ jobs:
           VERSION=$(./gradlew properties -q | grep "^version:" | awk '{print $2}')
           SHORT_SHA="${GITHUB_SHA::7}"
           ARTIFACT="MultiPlayerInvSync-${VERSION}-b${BUILD_NUMBER}-${SHORT_SHA}.jar"
+          
+          # Check if version is a snapshot
+          if echo "$VERSION" | grep -qE '(SNAPSHOT|snapshot|dev)'; then
+            IS_SNAPSHOT="true"
+          else
+            IS_SNAPSHOT="false"
+          fi
+          
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "is_snapshot=$IS_SNAPSHOT" >> "$GITHUB_OUTPUT"
           echo "Detected version: $VERSION" >> "$GITHUB_STEP_SUMMARY"
           echo "Artifact: $ARTIFACT" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Get latest release
+        if: github.event_name == 'push'
+        id: latest_release
+        shell: bash
+        run: |
+          # Get the latest release tag (excluding pre-releases if possible)
+          LATEST_TAG=$(git tag --list "v*" --sort=-creatordate | grep -v "build" | head -n 1)
+          
+          if [ -z "$LATEST_TAG" ]; then
+            echo "has_previous_release=false" >> "$GITHUB_OUTPUT"
+            echo "latest_tag=" >> "$GITHUB_OUTPUT"
+            echo "latest_version=" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_previous_release=true" >> "$GITHUB_OUTPUT"
+            echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+            
+            # Extract version from tag (remove 'v' prefix and '-b*' suffix)
+            LATEST_VERSION=$(echo "$LATEST_TAG" | sed -E 's/^v//; s/-b[0-9]+$//')
+            echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compare versions and determine release type
+        if: github.event_name == 'push'
+        id: version_check
+        shell: bash
+        run: |
+          CURRENT_VERSION=${{ steps.meta.outputs.version }}
+          HAS_PREVIOUS=${{ steps.latest_release.outputs.has_previous_release }}
+          IS_SNAPSHOT=${{ steps.meta.outputs.is_snapshot }}
+          
+          if [ "$IS_SNAPSHOT" = "true" ]; then
+            echo "release_type=pre-release" >> "$GITHUB_OUTPUT"
+            echo "is_higher_version=false" >> "$GITHUB_OUTPUT"
+          elif [ "$HAS_PREVIOUS" = "true" ]; then
+            LATEST_VERSION=${{ steps.latest_release.outputs.latest_version }}
+            
+            # Compare versions using sort -V (version sort)
+            HIGHER_VERSION=$(printf "%s\n%s" "$CURRENT_VERSION" "$LATEST_VERSION" | sort -V | tail -n1)
+            
+            if [ "$HIGHER_VERSION" = "$CURRENT_VERSION" ] && [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+              echo "is_higher_version=true" >> "$GITHUB_OUTPUT"
+              echo "release_type=release" >> "$GITHUB_OUTPUT"
+            else
+              echo "is_higher_version=false" >> "$GITHUB_OUTPUT"
+              echo "release_type=update" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # First release
+            echo "is_higher_version=true" >> "$GITHUB_OUTPUT"
+            echo "release_type=release" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate release notes
+        if: github.event_name == 'push'
+        id: release_notes
+        shell: bash
+        run: |
+          REPO="${{ github.repository }}"
+          git fetch --tags
+          
+          # Determine which commits to include based on release type
+          if [ "${{ steps.version_check.outputs.release_type }}" = "release" ]; then
+            # For new releases, show all commits since last release
+            LATEST_TAG="${{ steps.latest_release.outputs.latest_tag }}"
+            if [ -n "$LATEST_TAG" ]; then
+              COMMITS=$(git log --no-merges --pretty=format:"%s|%an|%H" "$LATEST_TAG..HEAD" -- src/ build.gradle.kts)
+            else
+              COMMITS=$(git log --no-merges --pretty=format:"%s|%an|%H" HEAD -- src/ build.gradle.kts)
+            fi
+          else
+            # For pre-releases/updates, show only new commits since last pre-release
+            # Get the most recent pre-release tag (any tag with "build" in it)
+            LATEST_PRERELEASE_TAG=$(git tag --list "*build*" --sort=-creatordate | head -n 1)
+            if [ -z "$LATEST_PRERELEASE_TAG" ]; then
+              # If no pre-release tags found, fall back to last release
+              LATEST_PRERELEASE_TAG="${{ steps.latest_release.outputs.latest_tag }}"
+            fi
+            if [ -n "$LATEST_PRERELEASE_TAG" ]; then
+              COMMITS=$(git log --no-merges --pretty=format:"%s|%an|%H" "$LATEST_PRERELEASE_TAG..HEAD" -- src/ build.gradle.kts)
+            else
+              COMMITS=$(git log --no-merges --pretty=format:"%s|%an|%H" HEAD -- src/ build.gradle.kts)
+            fi
+          fi
+          
+          # Initialize sections
+          FEATURES=""
+          FIXES=""
+          IMPROVEMENTS=""
+          REFACTOR=""
+          DOCS=""
+          OTHER=""
+          
+          if [ -z "$COMMITS" ]; then
+            NOTES="No significant changes since last release."
+          else
+            # Process each commit
+            while IFS="|" read -r MSG AUTHOR HASH; do
+              SHORT_HASH=${HASH:0:7}
+              LINK="[\`${SHORT_HASH}\`](https://github.com/${REPO}/commit/${HASH})"
+              
+              # Clean up the message (remove PR references, etc.)
+              CLEAN_MSG=$(echo "$MSG" | sed -E 's/\(#.*\)//g' | xargs)
+              
+              # Categorize based on commit message
+              MSG_LOWER=$(echo "$CLEAN_MSG" | tr '[:upper:]' '[:lower:]')
+              
+              if echo "$MSG_LOWER" | grep -qE '\b(add|added|new|implement|create|feat|feature)\b'; then
+                FEATURES+="- $CLEAN_MSG $LINK - $AUTHOR\n"
+              elif echo "$MSG_LOWER" | grep -qE '\b(fix|fixed|bug|patch|repair|resolve|issue)\b'; then
+                FIXES+="- $CLEAN_MSG $LINK - $AUTHOR\n"
+              elif echo "$MSG_LOWER" | grep -qE '\b(improve|optimiz|refactor|enhance|perf)\b'; then
+                IMPROVEMENTS+="- $CLEAN_MSG $LINK - $AUTHOR\n"
+              elif echo "$MSG_LOWER" | grep -qE '\b(doc|readme|changelog|comment)\b'; then
+                DOCS+="- $CLEAN_MSG $LINK - $AUTHOR\n"
+              elif echo "$MSG_LOWER" | grep -qE '\b(refactor|cleanup|style|format)\b'; then
+                REFACTOR+="- $CLEAN_MSG $LINK - $AUTHOR\n"
+              else
+                OTHER+="- $CLEAN_MSG $LINK - $AUTHOR\n"
+              fi
+            done <<< "$COMMITS"
+            
+            # Build the release notes
+            NOTES="## MultiPlayerInvSync v${{ steps.meta.outputs.version }}\n\n"
+            
+            if [ "${{ steps.version_check.outputs.release_type }}" = "release" ]; then
+              NOTES+="### What's Changed\n\n"
+            else
+              NOTES+="### Development Build (${{ env.BUILD_NUMBER }})\n\n"
+            fi
+            
+            [ -n "$FEATURES" ] && NOTES+="#### 🎯 New Features\n$FEATURES\n"
+            [ -n "$FIXES" ] && NOTES+="#### 🐞 Bug Fixes\n$FIXES\n"
+            [ -n "$IMPROVEMENTS" ] && NOTES+="#### ⚡ Improvements\n$IMPROVEMENTS\n"
+            [ -n "$REFACTOR" ] && NOTES+="#### 🔧 Refactoring\n$REFACTOR\n"
+            [ -n "$DOCS" ] && NOTES+="#### 📚 Documentation\n$DOCS\n"
+            [ -n "$OTHER" ] && NOTES+="#### 📝 Other Changes\n$OTHER\n"
+          fi
+          
+          # Add build info
+          NOTES+="\n---\n"
+          NOTES+="**Build**: ${{ env.BUILD_NUMBER }} | **Version**: ${{ steps.meta.outputs.version }}\n"
+          NOTES+="**Date**: $(date +%Y-%m-%d)\n"
+          
+          echo -e "$NOTES" > release_notes.md
+          cat release_notes.md
 
       - name: Rename artifact with version
         shell: bash
@@ -81,33 +236,12 @@ jobs:
           cp "$JAR_PATH" "build/out/${TARGET}"
 
       - name: Upload plugin JAR
+        if: steps.version_check.outputs.release_type != 'pre-release'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.meta.outputs.artifact }}
           path: build/out/${{ steps.meta.outputs.artifact }}
           if-no-files-found: error
-
-      - name: Generate release notes
-        if: github.event_name == 'push'
-        id: notes
-        shell: bash
-        run: |
-          git fetch --tags --quiet
-          LAST_TAG=$(git describe --tags --abbrev=0 --match "v*-b*" 2>/dev/null || echo "")
-          if [ -z "$LAST_TAG" ]; then
-            RANGE="${GITHUB_SHA}"
-            COMMITS=$(git log --no-merges --pretty=format:"- %s (%h)" -n 20 || true)
-          else
-            RANGE="$LAST_TAG..${GITHUB_SHA}"
-            COMMITS=$(git log --no-merges --pretty=format:"- %s (%h)" $RANGE || true)
-          fi
-          if [ -z "$COMMITS" ]; then
-            COMMITS="- Maintenance build"
-          fi
-          COMMIT_COUNT=$(echo "$COMMITS" | wc -l)
-          echo -e "## Changes (${COMMIT_COUNT} commits)\n$COMMITS\n\n" > release_notes.md
-          echo "last_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
-          echo "commit_count=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Create Git tag
         if: github.event_name == 'push'
@@ -124,11 +258,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tagstep.outputs.tag }}
-          name: "MultiPlayerInvSync v${{ steps.meta.outputs.version }} (build ${{ env.BUILD_NUMBER }}) - ${{ steps.notes.outputs.commit_count }} commits"
+          name: "MultiPlayerInvSync v${{ steps.meta.outputs.version }} (build ${{ env.BUILD_NUMBER }})"
           body_path: release_notes.md
           files: build/out/${{ steps.meta.outputs.artifact }}
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.meta.outputs.is_snapshot == 'true' }}
 
       - name: Build summary
         run: |
