@@ -13,7 +13,9 @@ import org.bukkit.Bukkit;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
 import org.bukkit.craftbukkit.inventory.CraftItemStack;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Pose;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.potion.PotionEffect;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelDuplexHandler;
@@ -134,6 +136,11 @@ public class InventorySyncManager {
         int srcLevel = 0;
         int srcTotalXp = 0;
         float srcExp = 0.0F;
+        double health = 0.0;
+        int foodLevel = 0;
+        float saturation = 0.0F;
+        Pose pose = null;
+        Collection<PotionEffect> effects = null;
 
         if (plugin.getConfigManager().isSyncMainInventory()) {
             for (int i = 0; i < 36; i++) {
@@ -170,7 +177,25 @@ public class InventorySyncManager {
             srcExp = source.getExp();
         }
         
-        return new InventorySnapshot(items, enderItems, cursorItem, srcLevel, srcTotalXp, srcExp);
+        if (plugin.getConfigManager().isSyncHealth()) {
+            health = source.getHealth();
+        }
+        
+        if (plugin.getConfigManager().isSyncHunger()) {
+            foodLevel = source.getFoodLevel();
+            saturation = source.getSaturation();
+        }
+        
+        if (plugin.getConfigManager().isSyncPose()) {
+            pose = source.getPose();
+        }
+        
+        if (plugin.getConfigManager().isSyncEffects()) {
+            effects = new ArrayList<>(source.getActivePotionEffects());
+        }
+        
+        return new InventorySnapshot(items, enderItems, cursorItem, srcLevel, srcTotalXp, srcExp, 
+                                      health, foodLevel, saturation, pose, effects);
     }
     
     private void applySnapshot(Player target, InventorySnapshot snapshot) {
@@ -219,6 +244,40 @@ public class InventorySyncManager {
                     target.setExp(snapshot.xpExp);
                 }
             }
+            
+            if (plugin.getConfigManager().isSyncHealth()) {
+                if (snapshot.health > 0 && target.getHealth() != snapshot.health) {
+                    double maxHealth = target.getMaxHealth();
+                    target.setHealth(Math.min(snapshot.health, maxHealth));
+                }
+            }
+            
+            if (plugin.getConfigManager().isSyncHunger()) {
+                if (target.getFoodLevel() != snapshot.foodLevel) {
+                    target.setFoodLevel(snapshot.foodLevel);
+                }
+                if (target.getSaturation() != snapshot.saturation) {
+                    target.setSaturation(snapshot.saturation);
+                }
+            }
+            
+            if (plugin.getConfigManager().isSyncPose()) {
+                if (snapshot.pose != null && target.getPose() != snapshot.pose) {
+                    target.setPose(snapshot.pose, true);
+                }
+            }
+            
+            if (plugin.getConfigManager().isSyncEffects()) {
+                if (snapshot.effects != null) {
+                    // Clear existing effects and apply new ones
+                    for (PotionEffect effect : target.getActivePotionEffects()) {
+                        target.removePotionEffect(effect.getType());
+                    }
+                    for (PotionEffect effect : snapshot.effects) {
+                        target.addPotionEffect(effect);
+                    }
+                }
+            }
 
             // Always refresh container to ensure client view is correct
             sendInventoryUpdate(nmsTarget);
@@ -244,14 +303,26 @@ public class InventorySyncManager {
         final int xpLevel;
         final int xpTotal;
         final float xpExp;
+        final double health;
+        final int foodLevel;
+        final float saturation;
+        final Pose pose;
+        final Collection<PotionEffect> effects;
         
-        InventorySnapshot(List<ItemStack> items, List<ItemStack> enderItems, ItemStack cursorItem, int xpLevel, int xpTotal, float xpExp) {
+        InventorySnapshot(List<ItemStack> items, List<ItemStack> enderItems, ItemStack cursorItem, 
+                         int xpLevel, int xpTotal, float xpExp, double health, int foodLevel, 
+                         float saturation, Pose pose, Collection<PotionEffect> effects) {
             this.items = items;
             this.enderItems = enderItems;
             this.cursorItem = cursorItem;
             this.xpLevel = xpLevel;
             this.xpTotal = xpTotal;
             this.xpExp = xpExp;
+            this.health = health;
+            this.foodLevel = foodLevel;
+            this.saturation = saturation;
+            this.pose = pose;
+            this.effects = effects;
         }
 
         long computeSignature() {
@@ -266,6 +337,15 @@ public class InventorySyncManager {
             h = 31 * h + xpLevel;
             h = 31 * h + xpTotal;
             h = 31 * h + Float.floatToIntBits(xpExp);
+            h = 31 * h + Double.hashCode(health);
+            h = 31 * h + foodLevel;
+            h = 31 * h + Float.floatToIntBits(saturation);
+            h = 31 * h + (pose != null ? pose.hashCode() : 0);
+            if (effects != null) {
+                for (PotionEffect effect : effects) {
+                    h = 31 * h + effect.hashCode();
+                }
+            }
             return h;
         }
 

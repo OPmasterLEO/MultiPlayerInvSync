@@ -120,4 +120,20 @@ public class ConfigManager {
     public boolean isRedisAllowWithoutProxy() {
         return config.getBoolean("redis.allow-without-proxy", false);
     }
+    
+    public boolean isSyncHealth() {
+        return config.getBoolean("sync.health", false);
+    }
+    
+    public boolean isSyncHunger() {
+        return config.getBoolean("sync.hunger", false);
+    }
+    
+    public boolean isSyncPose() {
+        return config.getBoolean("sync.pose", false);
+    }
+    
+    public boolean isSyncEffects() {
+        return config.getBoolean("sync.effects", false);
+    }
 }

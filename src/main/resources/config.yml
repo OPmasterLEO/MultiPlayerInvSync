@@ -20,6 +20,14 @@ sync:
   delay-ticks: 1
   # Sync player experience (level + progress)
   experience: false
+  # Sync player health
+  health: false
+  # Sync hunger bar (food level and saturation)
+  hunger: false
+  # Sync player pose (swimming, sneaking, crawling)
+  pose: false
+  # Sync player potion effects
+  effects: false
 
 # Economy synchronization
 economy:
