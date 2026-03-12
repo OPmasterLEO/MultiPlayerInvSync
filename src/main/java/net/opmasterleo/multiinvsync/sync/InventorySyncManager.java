@@ -2,6 +2,7 @@ package net.opmasterleo.multiinvsync.sync;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -17,15 +18,18 @@ import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.potion.PotionEffect;
 
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelPromise;
-import net.minecraft.nbt.CompoundTag;
+import io.netty.channel.ChannelInboundHandlerAdapter;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.opmasterleo.multiinvsync.MultiInvSyncPlugin;
 
 public class InventorySyncManager {
+    private static final String HANDLER_NAME = "multiinvsync_handler";
+    private static final long PACKET_THROTTLE_NANOS = 2_000_000L;
+    private static final byte PACKET_FLAG_NONE = 0;
+    private static final byte PACKET_FLAG_INVENTORY_MUTATION = 1;
+    private static final byte PACKET_FLAG_CREATIVE_SET_SLOT = 2;
     
     private final MultiInvSyncPlugin plugin;
     private final Map<UUID, Long> lastSyncTime = new ConcurrentHashMap<>();
@@ -34,6 +38,7 @@ public class InventorySyncManager {
     private final Set<UUID> processingSync = ConcurrentHashMap.newKeySet();
     private final Set<UUID> queuedSync = ConcurrentHashMap.newKeySet();
     private final Map<UUID, Long> snapshotSignatures = new ConcurrentHashMap<>();
+    private final Map<Class<?>, Byte> packetTypeCache = new ConcurrentHashMap<>();
     
     private volatile boolean syncMainInventory;
     private volatile boolean syncArmor;
@@ -168,7 +173,7 @@ public class InventorySyncManager {
         Pose pose = null;
         Collection<PotionEffect> effects = null;
 
-        if (syncMainInventory) {
+        if (syncMainInventory && items != null) {
             for (int i = 0; i < 36; i++) {
                 items.add(CraftItemStack.asNMSCopy(inv.getItem(i)));
             }
@@ -239,34 +244,46 @@ public class InventorySyncManager {
         try {
             ServerPlayer nmsTarget = ((CraftPlayer) target).getHandle();
             PlayerInventory targetInv = target.getInventory();
+            boolean changed = false;
             
             if (snapshot.items != null) {
                 int slot = 0;
                 if (syncMainInventory) {
                     for (int i = 0; i < 36 && slot < snapshot.items.size(); i++) {
-                        setItemIfChanged(targetInv, i, snapshot.items.get(slot++));
+                        changed |= setItemIfChanged(targetInv, i, snapshot.items.get(slot++));
                     }
                 }
 
                 if (syncArmor && slot + 3 < snapshot.items.size()) {
-                    setItemIfChanged(targetInv, 39, snapshot.items.get(slot++)); // Helmet
-                    setItemIfChanged(targetInv, 38, snapshot.items.get(slot++)); // Chest
-                    setItemIfChanged(targetInv, 37, snapshot.items.get(slot++)); // Legs
-                    setItemIfChanged(targetInv, 36, snapshot.items.get(slot++)); // Boots
+                    changed |= setItemIfChanged(targetInv, 39, snapshot.items.get(slot++)); // Helmet
+                    changed |= setItemIfChanged(targetInv, 38, snapshot.items.get(slot++)); // Chest
+                    changed |= setItemIfChanged(targetInv, 37, snapshot.items.get(slot++)); // Legs
+                    changed |= setItemIfChanged(targetInv, 36, snapshot.items.get(slot++)); // Boots
                 }
 
                 if (syncOffhand && slot < snapshot.items.size()) {
-                    setItemIfChanged(targetInv, 40, snapshot.items.get(slot));
+                    changed |= setItemIfChanged(targetInv, 40, snapshot.items.get(slot));
                 }
             }
             
             if (syncCursor && snapshot.cursorItem != null) {
-                target.setItemOnCursor(CraftItemStack.asBukkitCopy(snapshot.cursorItem));
+                org.bukkit.inventory.ItemStack currentCursor = target.getItemOnCursor();
+                org.bukkit.inventory.ItemStack newCursor = CraftItemStack.asBukkitCopy(snapshot.cursorItem);
+                if (!currentCursor.equals(newCursor)) {
+                    target.setItemOnCursor(newCursor);
+                    changed = true;
+                }
             }
 
             if (syncEnderChest && snapshot.enderItems != null) {
                 for (int i = 0; i < 27 && i < snapshot.enderItems.size(); i++) {
-                    target.getEnderChest().setItem(i, CraftItemStack.asBukkitCopy(snapshot.enderItems.get(i)));
+                    org.bukkit.inventory.ItemStack newItem = CraftItemStack.asBukkitCopy(snapshot.enderItems.get(i));
+                    org.bukkit.inventory.ItemStack currentItem = target.getEnderChest().getItem(i);
+                    if ((currentItem == null && !newItem.getType().isAir()) ||
+                        (currentItem != null && !currentItem.equals(newItem))) {
+                        target.getEnderChest().setItem(i, newItem);
+                        changed = true;
+                    }
                 }
             }
 
@@ -274,6 +291,7 @@ public class InventorySyncManager {
                 target.setTotalExperience(snapshot.xpTotal);
                 target.setLevel(snapshot.xpLevel);
                 target.setExp(snapshot.xpExp);
+                changed = true;
             }
             
             if (syncHealth && snapshot.health > 0) {
@@ -282,6 +300,7 @@ public class InventorySyncManager {
                     var maxHealthAttr = target.getAttribute(org.bukkit.attribute.Attribute.GENERIC_MAX_HEALTH);
                     double maxHealth = maxHealthAttr != null ? maxHealthAttr.getValue() : 20.0;
                     target.setHealth(Math.min(snapshot.health, maxHealth));
+                    changed = true;
                 }
             }
             
@@ -291,85 +310,92 @@ public class InventorySyncManager {
                 if (currentFood != snapshot.foodLevel || currentSat != snapshot.saturation) {
                     if (currentFood != snapshot.foodLevel) {
                         target.setFoodLevel(snapshot.foodLevel);
+                        changed = true;
                     }
                     if (currentSat != snapshot.saturation) {
                         target.setSaturation(snapshot.saturation);
+                        changed = true;
                     }
                 }
             }
             
             if (syncPose && snapshot.pose != null && target.getPose() != snapshot.pose) {
                 target.setPose(snapshot.pose, true);
+                changed = true;
             }
             
             if (syncEffects) {
-                syncPotionEffects(target, snapshot.effects);
+                changed |= syncPotionEffects(target, snapshot.effects);
             }
 
-            // Always refresh container to ensure client view is correct
-            sendInventoryUpdate(nmsTarget);
+            if (changed) {
+                sendInventoryUpdate(nmsTarget);
+            }
         } finally {
             processingSync.remove(targetId);
         }
     }
     
-    private void syncPotionEffects(Player target, Collection<PotionEffect> sourceEffects) {
+    private boolean syncPotionEffects(Player target, Collection<PotionEffect> sourceEffects) {
+        boolean changed = false;
         if (sourceEffects == null || sourceEffects.isEmpty()) {
             Collection<PotionEffect> currentEffects = target.getActivePotionEffects();
             if (!currentEffects.isEmpty()) {
                 for (PotionEffect effect : currentEffects) {
                     target.removePotionEffect(effect.getType());
                 }
+                changed = true;
             }
-            return;
+            return changed;
         }
         
         Collection<PotionEffect> currentEffects = target.getActivePotionEffects();
-        
-        // Build a set of effect types from source for quick lookup
-        Set<org.bukkit.potion.PotionEffectType> sourceTypes = ConcurrentHashMap.newKeySet();
+
+        Map<org.bukkit.potion.PotionEffectType, PotionEffect> sourceByType = new HashMap<>(sourceEffects.size());
         for (PotionEffect effect : sourceEffects) {
-            sourceTypes.add(effect.getType());
+            sourceByType.put(effect.getType(), effect);
         }
-        
-        // Remove effects that don't exist in source
+
         for (PotionEffect currentEffect : currentEffects) {
-            if (!sourceTypes.contains(currentEffect.getType())) {
+            if (!sourceByType.containsKey(currentEffect.getType())) {
                 target.removePotionEffect(currentEffect.getType());
+                changed = true;
             }
         }
-        
-        // Add or update effects from source
+
+        Map<org.bukkit.potion.PotionEffectType, PotionEffect> currentByType = new HashMap<>(currentEffects.size());
+        for (PotionEffect currentEffect : currentEffects) {
+            currentByType.put(currentEffect.getType(), currentEffect);
+        }
+
         for (PotionEffect sourceEffect : sourceEffects) {
-            boolean needsUpdate = true;
-            for (PotionEffect currentEffect : currentEffects) {
-                if (currentEffect.getType().equals(sourceEffect.getType())) {
-                    // Check if effect matches exactly
-                    if (currentEffect.getAmplifier() == sourceEffect.getAmplifier() &&
-                        currentEffect.getDuration() == sourceEffect.getDuration() &&
-                        currentEffect.hasParticles() == sourceEffect.hasParticles() &&
-                        currentEffect.isAmbient() == sourceEffect.isAmbient()) {
-                        needsUpdate = false;
-                    }
-                    break;
-                }
-            }
+            PotionEffect currentEffect = currentByType.get(sourceEffect.getType());
+            boolean needsUpdate = currentEffect == null ||
+                currentEffect.getAmplifier() != sourceEffect.getAmplifier() ||
+                currentEffect.getDuration() != sourceEffect.getDuration() ||
+                currentEffect.hasParticles() != sourceEffect.hasParticles() ||
+                currentEffect.isAmbient() != sourceEffect.isAmbient() ||
+                currentEffect.hasIcon() != sourceEffect.hasIcon();
             if (needsUpdate) {
                 target.addPotionEffect(new PotionEffect(sourceEffect.getType(), 
                     sourceEffect.getDuration(), sourceEffect.getAmplifier(), 
                     sourceEffect.isAmbient(), sourceEffect.hasParticles(), sourceEffect.hasIcon()));
+                changed = true;
             }
         }
+
+        return changed;
     }
     
-    private void setItemIfChanged(PlayerInventory inv, int slot, ItemStack nmsItem) {
+    private boolean setItemIfChanged(PlayerInventory inv, int slot, ItemStack nmsItem) {
         org.bukkit.inventory.ItemStack bukkitItem = CraftItemStack.asBukkitCopy(nmsItem);
         org.bukkit.inventory.ItemStack current = inv.getItem(slot);
         
-        if (current == null && bukkitItem.getType().isAir()) return;
-        if (current != null && current.equals(bukkitItem)) return;
+        if (current == null && bukkitItem.getType().isAir()) return false;
+        if (current != null && current.equals(bukkitItem)) return false;
         
         inv.setItem(slot, bukkitItem);
+        return true;
     }
     
     private static class InventorySnapshot {
@@ -435,15 +461,7 @@ public class InventorySyncManager {
             if (stack == null || stack.isEmpty()) {
                 return 0L;
             }
-            long h = stack.getItem().hashCode();
-            h = 31 * h + stack.getCount();
-            try {
-                CompoundTag tag = new CompoundTag();
-                stack.save(null, tag);
-                h = 31 * h + tag.hashCode();
-            } catch (Exception ignored) {
-            }
-            return h;
+            return stack.hashCode();
         }
     }
     
@@ -483,11 +501,11 @@ public class InventorySyncManager {
             ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
             Channel channel = nmsPlayer.connection.connection.channel;
             
-            if (channel.pipeline().get("multiinvsync_handler") != null) {
+            if (channel.pipeline().get(HANDLER_NAME) != null) {
                 return;
             }
             
-            channel.pipeline().addBefore("packet_handler", "multiinvsync_handler", 
+            channel.pipeline().addBefore("packet_handler", HANDLER_NAME, 
                 new InventoryPacketHandler(player));
         } catch (Exception e) {
             plugin.getLogger().log(java.util.logging.Level.WARNING, 
@@ -500,8 +518,8 @@ public class InventorySyncManager {
             ServerPlayer nmsPlayer = ((CraftPlayer) player).getHandle();
             Channel channel = nmsPlayer.connection.connection.channel;
             
-            if (channel.pipeline().get("multiinvsync_handler") != null) {
-                channel.pipeline().remove("multiinvsync_handler");
+            if (channel.pipeline().get(HANDLER_NAME) != null) {
+                channel.pipeline().remove(HANDLER_NAME);
             }
         } catch (Exception e) {
             plugin.getLogger().log(java.util.logging.Level.WARNING, 
@@ -521,9 +539,9 @@ public class InventorySyncManager {
         return bypassPlayers.contains(uuid);
     }
     
-    private class InventoryPacketHandler extends ChannelDuplexHandler {
+    private class InventoryPacketHandler extends ChannelInboundHandlerAdapter {
         private final Player player;
-        private long lastPacketTime = 0;
+        private long lastPacketTime;
         
         public InventoryPacketHandler(Player player) {
             this.player = player;
@@ -531,47 +549,49 @@ public class InventorySyncManager {
         
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-            if (isCreativeSetSlot(msg)) {
-                plugin.getScheduler().runAtEntityLater(player, () -> requestSync(player, 3L, true), 0L);
-            } else if (isInventoryMutationPacket(msg)) {
+            byte packetFlags = classifyPacket(msg);
+            if ((packetFlags & PACKET_FLAG_CREATIVE_SET_SLOT) != 0) {
+                requestSync(player, 3L, true);
+            } else if ((packetFlags & PACKET_FLAG_INVENTORY_MUTATION) != 0) {
                 long now = System.nanoTime();
-                if (now - lastPacketTime > 500_000) {
+                if (now - lastPacketTime >= PACKET_THROTTLE_NANOS) {
                     lastPacketTime = now;
-                    plugin.getScheduler().runAtEntityLater(player, () -> requestSync(player, 2L, true), 0L);
+                    requestSync(player, 2L, true);
                 }
             }
             super.channelRead(ctx, msg);
         }
-        
-        @Override
-        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
-            // IGNORE Server to Client updates which may be caused by our own sync
-            // Rely only on Client to Server (Input) packets to trigger syncs
-            // or Bukkit Events for external plugins.
-            // This prevents the infinite feedback loop (dup-echo).
-            super.write(ctx, msg, promise);
-        }
     }
 
-    private boolean isInventoryMutationPacket(Object msg) {
+    private byte classifyPacket(Object msg) {
         if (msg == null) {
-            return false;
+            return PACKET_FLAG_NONE;
         }
+
+        Class<?> packetClass = msg.getClass();
+        Byte cached = packetTypeCache.get(packetClass);
+        if (cached != null) {
+            return cached;
+        }
+
+        byte flags = PACKET_FLAG_NONE;
         String name = msg.getClass().getSimpleName();
-        // Cover modern and legacy names without hard-linking classes (avoids NoClassDefFoundError)
-        return name.contains("ContainerClick") // Std click
+        if (name.contains("SetCreativeModeSlot") || name.contains("CreativeInventoryAction")) {
+            flags |= PACKET_FLAG_CREATIVE_SET_SLOT;
+        }
+
+        if (name.contains("ContainerClick") // Std click
             || name.contains("WindowClick")
             || name.contains("PickItem") // Creative pick
             || name.contains("SetSlot") // Sometimes client sends this?
             || name.contains("PlayerAction") // Drop/Swap/Dig
             || name.contains("BlockDig") // Drop item
             || name.contains("SwapHand")
-            || name.contains("CreativeInventoryAction");
-    }
+            || name.contains("CreativeInventoryAction")) {
+            flags |= PACKET_FLAG_INVENTORY_MUTATION;
+        }
 
-    private boolean isCreativeSetSlot(Object msg) {
-        if (msg == null) return false;
-        String name = msg.getClass().getSimpleName();
-        return name.contains("SetCreativeModeSlot") || name.contains("CreativeInventoryAction");
+        packetTypeCache.put(packetClass, flags);
+        return flags;
     }
 }
